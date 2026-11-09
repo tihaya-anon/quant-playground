@@ -1,0 +1,117 @@
+{
+  "name": "quant-playground",
+  // Pre-built by hack/devcontainer.sh, so a Rebuild is Docker layer cache rather than a fresh
+  // download of ~1GB of wheels. The script owns the build because it pins the base to a digest,
+  // passes the host's proxy/mirror settings through and builds on the host network so a localhost
+  // proxy is reachable. Rebuild it when .devcontainer/Dockerfile or uv.lock changes:
+  //   hack/devcontainer.sh image     # local only
+  //   hack/devcontainer.sh sync      # and keep the Docker Hub copy aligned
+  // initializeCommand below builds it on first open when it is missing locally.
+  "image": "chihayaanon0908/quant-playground-dev:latest",
+  // Runs on the host, before the container is created.
+  //  - `touch -a ~/.proxy_env`: Docker turns a bind mount whose source does not exist into a
+  //    *directory* on the host, which would then shadow the file written there later.
+  //  - `hack/devcontainer.sh ensure`: build the image only if it is not present locally, so a fresh
+  //    clone opens without a manual step and an existing image is never rebuilt behind your back.
+  "initializeCommand": "touch -a \"$HOME/.proxy_env\" && hack/devcontainer.sh ensure",
+  "workspaceFolder": "/workspaces/quant-playground",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/quant-playground,type=bind",
+  "features": {
+    // The python image has no non-root user, so this creates one. 1000:1000 is what
+    // agent.Dockerfile creates too, so a file written here and a file written there have the same
+    // owner; updateRemoteUserUID still adjusts it if the host's uid differs. The venv at /opt/venv
+    // is chowned to 1000 in the image for the same reason.
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "agent",
+      "userUid": "1000",
+      "userGid": "1000",
+      // zsh is baked by .devcontainer/Dockerfile and the dotfiles are bind-mounted read-only by
+      // "mounts"; don't let this feature install oh-my-zsh over the mount point.
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "upgradePackages": false
+    }
+  },
+  "containerEnv": {
+    // Pulled from the host shell env instead of hardcoding a port, so the repo stays
+    // machine-independent. ~/.proxy_env (mounted below) is the more robust path: it does not
+    // depend on how VS Code was launched. See hack/proxy-env.example.
+    "http_proxy": "${localEnv:http_proxy}",
+    "https_proxy": "${localEnv:https_proxy}",
+    "HTTP_PROXY": "${localEnv:HTTP_PROXY}",
+    "HTTPS_PROXY": "${localEnv:HTTPS_PROXY}",
+    "no_proxy": "${localEnv:no_proxy}",
+    "NO_PROXY": "${localEnv:NO_PROXY}",
+    // uv's download cache on a named volume (mounted below), so `uv add` after a Rebuild reuses
+    // wheels instead of fetching them again.
+    "UV_CACHE_DIR": "/home/agent/.cache/uv"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder}/hack/agent-home/.zshenv,target=/home/agent/.zshenv,type=bind,readonly",
+    "source=${localWorkspaceFolder}/hack/agent-home/.zprofile,target=/home/agent/.zprofile,type=bind,readonly",
+    "source=${localWorkspaceFolder}/hack/agent-home/.zshrc,target=/home/agent/.zshrc,type=bind,readonly",
+    "source=${localWorkspaceFolder}/hack/agent-home/.zsh_aliases,target=/home/agent/.zsh_aliases,type=bind,readonly",
+    "source=${localWorkspaceFolder}/hack/agent-home/.config/starship.toml,target=/home/agent/.config/starship.toml,type=bind,readonly",
+    // git push over SSH and the commit identity come from the host, read-only: the container
+    // borrows the host's identity, it does not own it.
+    "source=${localEnv:HOME}/.ssh,target=/home/agent/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/agent/.gitconfig,type=bind,readonly",
+    // Proxy settings read by ~/.zprofile; see "initializeCommand" for why the file always exists.
+    "source=${localEnv:HOME}/.proxy_env,target=/home/agent/.proxy_env,type=bind,readonly",
+    "source=quant-devcontainer-uv-cache,target=/home/agent/.cache/uv,type=volume"
+  ],
+  "onCreateCommand": "bash .devcontainer/post-install.sh",
+  "remoteUser": "agent",
+  "updateRemoteUserUID": true,
+  // Host networking by default (overridable with DEVCONTAINER_NETWORK=bridge before VS Code
+  // starts): a proxy bound to the host's loopback is reachable, and `jupyter lab` on 8888 is
+  // simply localhost:8888 on the host.
+  "runArgs": ["--network=${localEnv:DEVCONTAINER_NETWORK:host}"],
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.profiles.linux": {
+          "zsh": { "path": "/bin/zsh", "args": ["-l"] }
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        // The venv baked into the image. Pinned here so the Python extension never offers to
+        // create a .venv in the workspace.
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": false,
+        "python.analysis.extraPaths": ["${workspaceFolder}/src", "${workspaceFolder}"],
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": ["labs"],
+        "jupyter.notebookFileRoot": "${workspaceFolder}",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+        },
+        "ruff.path": ["/opt/venv/bin/ruff"],
+        "shellcheck.executablePath": "/usr/local/bin/shellcheck",
+        "shellcheck.customArgs": ["-x"],
+        "shellcheck.useWorkspaceRootAsCwd": true,
+        // shellcheck cannot read zsh; it would report zsh's own glob qualifiers as errors.
+        "shellcheck.ignorePatterns": {
+          "**/.zprofile": true,
+          "**/.zsh_aliases": true,
+          "**/.zshenv": true,
+          "**/.zshrc": true
+        },
+        "editor.stickyScroll.enabled": true,
+        "workbench.tree.enableStickyScroll": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff",
+        "timonwong.shellcheck",
+        "davidanson.vscode-markdownlint",
+        "mechatroner.rainbow-csv",
+        "ms-azuretools.vscode-containers"
+      ]
+    }
+  }
+}

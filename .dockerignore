@@ -1,0 +1,6 @@
+# Used by .devcontainer/Dockerfile. Ignore everything and re-include only what the build COPYs:
+# the dependency spec. Keeping labs/ out of the context is what keeps the venv layer cached.
+**
+!pyproject.toml
+!uv.lock
+!.python-version

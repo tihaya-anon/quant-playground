@@ -1,0 +1,45 @@
+[project]
+name = "quant-playground"
+version = "0.1.0"
+description = "Hands-on quantitative trading labs, from returns arithmetic to optimal execution."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  # 数值与数据
+  "numpy>=2.2",
+  "pandas>=2.2",
+  "pyarrow>=18",
+  "scipy>=1.15",
+  # 统计 / 计量 / 机器学习
+  "statsmodels>=0.14.4",
+  "scikit-learn>=1.6",
+  "arch>=7.2",
+  "lightgbm>=4.5",
+  # 组合优化
+  "cvxpy>=1.6",
+  # 可视化
+  "matplotlib>=3.10",
+  "tqdm>=4.67",
+]
+
+[project.optional-dependencies]
+# 真实行情数据源。labs 本身只用合成数据（离线、可复现），这些只在“拓展练习”里用到。
+data = [
+  "akshare>=1.16",
+  "yfinance>=0.2.54",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.9",
+  "jupyterlab>=4.3",
+  "ipykernel>=6.29",
+  "ipywidgets>=8.1",
+]
+
+[tool.uv]
+# labs 不是一个要发布的包：venv 只装依赖，源码通过 PYTHONPATH / pytest pythonpath 引入。
+# 这样 venv 可以完整地烘焙进镜像，而不会因为改了一行 lab 代码就让依赖层失效。
+package = false
+default-groups = ["dev"]

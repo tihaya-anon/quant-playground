@@ -1,0 +1,9 @@
+# Out of pyproject.toml for the same reason as pytest.ini: keep the venv layer's cache key to
+# dependency changes only.
+line-length = 100
+target-version = "py313"
+extend-exclude = ["hack/agent-home"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD"]
+ignore = ["E741"]

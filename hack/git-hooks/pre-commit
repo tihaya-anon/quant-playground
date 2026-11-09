@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Gate commits on ruff (lint + format) for staged Python files and shellcheck for staged scripts.
+# Armed by core.hooksPath=hack/git-hooks, which post-install.sh and the agent entrypoint set.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+mapfile -t py < <(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+mapfile -t sh < <(git diff --cached --name-only --diff-filter=ACMR -- '*.sh' 'hack/agent-bin/*' 'hack/git-hooks/*')
+
+status=0
+if ((${#py[@]})); then
+  if command -v ruff >/dev/null 2>&1; then
+    ruff check "${py[@]}" || status=1
+    ruff format --check "${py[@]}" || status=1
+  else
+    echo "pre-commit: ruff not on PATH; skipping Python checks" >&2
+  fi
+fi
+if ((${#sh[@]})); then
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -x "${sh[@]}" || status=1
+  else
+    echo "pre-commit: shellcheck not on PATH; skipping shell checks" >&2
+  fi
+fi
+
+if ((status)); then
+  echo "pre-commit: fix the above (make fmt fixes formatting), or commit with --no-verify" >&2
+fi
+exit "$status"
