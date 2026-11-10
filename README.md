@@ -47,18 +47,15 @@
 ```text
 labs/labNN_xxx/
 ├── README.md        讲义：推导和直觉，重点在“为什么”和“什么时候不成立”（先读这个）
-├── experiments.py   实验：每个 # %% 单元格先写下预测，再运行，对照结果
 ├── audit.py         审计：一份结论“显著”的研究代码，里面有让结论偏乐观的错误——找出来、修好
 └── test_audit.py    审查任何回测时都值得做的性质检查，自动判分
 solutions/labNN_xxx.py   修正后的 audit.py（做完再看）
 ```
 
-1. **读讲义。**
-2. **做实验。** 在 VS Code 里打开 `experiments.py`，每个 `# %%` 是一个单元格（`Shift+Enter` 运行）。
-   **先在 `预测：` 后面写下答案再运行**——预测错的地方，正是直觉需要修正的地方。
-3. **做审计。** 像 code review 一样读 `audit.py`，先在文件开头的「审计记录」里写下你发现的问题，
+1. **读讲义。** 讲义里的数字来自合成数据上的模拟，想自己验证可以在 notebook 里调用 `quantlab` 重跑。
+2. **做审计。** 像 code review 一样读 `audit.py`，先在文件开头的「审计记录」里写下你发现的问题，
    再动手改，最后跑测试看看漏了什么。
-4. **思考题**写在 notebook 里，写完可以让 Claude 批改。
+3. **思考题**写在 notebook 里，写完可以让 Claude 批改。
 
 ```bash
 make test LAB=03            # 检查你修改后的 audit.py
@@ -72,7 +69,7 @@ make jupyter                # JupyterLab（localhost:8888）
 `vol`、`engine`、`ml`、`options`、`execution`），直接调用，测试在 `tests/`。
 审查任何回测时，配合 [回测陷阱清单](docs/pandas-pitfalls.md) 使用。
 
-实验和测试都跑在**合成数据**上：离线、确定、而且“真相已知”——我们知道真实的 μ、β、半衰期、
+讲义里的数字和审计测试都基于**合成数据**：离线、确定、而且“真相已知”——我们知道真实的 μ、β、半衰期、
 GARCH 参数，也知道哪里根本没有信号，所以能检验一个结论到底对不对。
 每个 lab 的“拓展”部分再用真实行情（`quantlab.realdata`）重做一遍。
 

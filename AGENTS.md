@@ -9,9 +9,9 @@ learner. The course is judgement-first: writing code is not the skill being trai
 backtests and research claims is.
 
 Each `labs/labNN_*/` has `README.md` (lecture: derivations, intuition, when it breaks, economic
-reasoning), `experiments.py` (`# %%` cells: the learner writes a prediction, then runs),
-`audit.py` (plausible research code with planted optimistic-bias bugs; the learner reviews and
-fixes it), `test_audit.py` (property checks a reviewer would run, not naming the bugs).
+reasoning, with simulated results from `quantlab` quoted inline), `audit.py` (plausible
+research code with planted optimistic-bias bugs; the learner reviews and fixes it),
+`test_audit.py` (property checks a reviewer would run, not naming the bugs).
 `solutions/<lab>.py` is the fixed `audit.py`; `labs/_harness.py` loads `audit.py` by default and
 `solutions/` when `QUANT_SOLUTIONS=1`. All reusable implementations live in `src/quantlab/` and
 are tested under `tests/`.
@@ -21,10 +21,11 @@ confirm at least one test in `test_audit.py` fails.
 
 ## Rules
 
-- **Do not fix `labs/*/audit.py` or answer the experiments' predictions for the learner** unless explicitly asked. Hints, explanations
+- **Do not fix `labs/*/audit.py` for the learner** unless explicitly asked. Hints, explanations
   and reviews of their audit notes / fixes / written answers are the default mode of help. When
   asked to review, run `make test LAB=NN` and explain failures in terms of the underlying concept.
-- Plot labels in `experiments.py` are English (the images have no CJK font).
+- Numbers quoted in a lecture must come from actually running `quantlab` on the synthetic data.
+- Plot labels are English (the images have no CJK font).
 - Tests run on synthetic data from `src/quantlab/data.py` with fixed seeds: keep them offline,
   deterministic, and under ~30s per lab. Statistical assertions need generous tolerances.
 - Any change to a test must still pass with `make check` (reference solutions).
