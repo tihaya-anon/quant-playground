@@ -15,17 +15,29 @@
 - quantlab.risk / quantlab.perf 里的函数是正确的，可以放心调用（讲义里有它们的含义）。
 
 审计记录（自己填）：
-    1.
-    2.
-    3.
-    ...
+    1. 日历日和交易日对不上，应该drop掉周末和节假日。
+       周末沿用周五净值，产生 2/7 的 0 收益：日标准差被摊薄约 sqrt(5/7)，再乘 sqrt(252)
+       年化，波动被低估约 15%，Sharpe 相应被高估。修正：按 day_of_week < 5 只保留工作日。
+       局限：节假日仍会留下少量 0 收益，严格做法是用交易所日历过滤；
+       不能用“净值不变”来判断非交易日，那会误删真实的平盘日。
+    2. Sortino 的分母用了“亏损日收益的标准差”：只对亏损日求平均，且围绕亏损日自己的均值
+       计算离散度，两者都让分母偏小、Sortino 偏高。正确的下行偏差是
+       sqrt(mean(min(r - MAR, 0)^2))：对全部 n 天求平均（上涨日贡献 0），偏离基准是 MAR=0。
+       实现时注意口径：公式里的 n 是观测天数 len(returns)，不是 252；结果是日频的，
+       要乘 sqrt(252) 年化，才能和面板上的年化波动、Sharpe 放在一起比较。
+    3. 回撤只用月末净值，借口是“避免日内噪声”。回撤是路径的性质，月中的最低点被抹掉，
+       回撤只会被低估。展示频率和风险计量是两回事：用全部观测计算。
+    4. VaR/CVaR 用正态参数化（均值 + 标准差），借口是“更平滑、更稳定”。公式本身没错，
+       错在正态假设：日收益肥尾，正态 VaR 的样本外突破率约 1.45%（应为 1%），
+       CVaR 低估约 35%（2.55% vs 实际 3.93%），因为 CVaR 正好落在正态分布描述最差的尾部。
+       这类错误读代码看不出来，只能拿实际数据回测。修正：历史分位数作 VaR，
+       低于分位数的平均损失作 CVaR。
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 TRADING_DAYS = 252
 ALPHA = 0.01  # 99% VaR / CVaR
@@ -33,7 +45,9 @@ ALPHA = 0.01  # 99% VaR / CVaR
 
 def daily_returns(nav: pd.Series) -> pd.Series:
     """每日收益。"""
-    return nav.pct_change().dropna()
+    # 只保留交易日：周末沿用周五净值，会产生一串 0 收益
+    trading = nav[nav.index.day_of_week < 5]
+    return trading.pct_change().dropna()
 
 
 def ann_vol(returns: pd.Series) -> float:
@@ -46,26 +60,23 @@ def sharpe(returns: pd.Series) -> float:
 
 def sortino(returns: pd.Series) -> float:
     """Sortino：只把下跌算作风险。"""
-    downside = returns[returns < 0]
-    # 下行波动：亏损日收益的标准差
-    return float(returns.mean() * TRADING_DAYS / (downside.std(ddof=1) * np.sqrt(TRADING_DAYS)))
+    MAR = 0
+    n = len(returns)
+    downside = returns[returns < MAR]
+    dd = np.sqrt(downside.pow(2).sum() / n)
+    sortino = (returns.mean() - MAR) / dd
+    return float(sortino) * np.sqrt(TRADING_DAYS)
 
 
 def max_drawdown(nav: pd.Series) -> float:
     """最大回撤（正数）。"""
-    # 投委会看的是月报，用月末净值计算回撤，避免日内噪声
-    monthly = nav.resample("ME").last()
-    return float(-(monthly / monthly.cummax() - 1).min())
+    return float(-(nav / nav.cummax() - 1).min())
 
 
 def var_cvar(returns: pd.Series, alpha: float = ALPHA) -> tuple[float, float]:
     """单日 VaR 与 CVaR（正数表示损失）。"""
-    # 用均值和标准差参数化估计，比历史分位数更平滑、更稳定
-    mu, sd = returns.mean(), returns.std(ddof=1)
-    z = stats.norm.ppf(alpha)
-    var = -(mu + sd * z)
-    cvar = -(mu - sd * stats.norm.pdf(z) / alpha)
-    return float(var), float(cvar)
+    q = np.quantile(returns.dropna().to_numpy(), alpha)
+    return float(-q), float(-returns[returns <= q].mean())
 
 
 def dashboard(nav: pd.Series) -> dict:
