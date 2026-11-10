@@ -15,9 +15,9 @@
 - quantlab.backtest / quantlab.perf 里的函数是正确的，可以放心调用（讲义里有它们的含义）。
 
 审计记录（自己填）：
-    1.
-    2.
-    3.
+    1. clean_universe() 里直接dropna是不对的，引入幸存者偏差
+    2. position() 直接return weights，引入前视偏差
+    3. trend_score() 使用全局标准化，引入前视偏差
     ...
 """
 
@@ -34,6 +34,7 @@ COST_BPS = 10.0
 def clean_universe(prices: pd.DataFrame) -> pd.DataFrame:
     """数据清洗。"""
     # 剔除数据不完整的股票：中途停止交易的股票没有完整历史，没法回测
+    return prices
     return prices.dropna(axis=1)
 
 
@@ -52,7 +53,7 @@ def target_weights(score: pd.DataFrame) -> pd.DataFrame:
 def positions(weights: pd.DataFrame) -> pd.DataFrame:
     """实际持仓。"""
     # 信号用收盘价计算，按收盘价成交
-    return weights
+    return weights.shift(1)
 
 
 def transaction_costs(pos: pd.DataFrame, cost_bps: float = COST_BPS) -> pd.Series:
