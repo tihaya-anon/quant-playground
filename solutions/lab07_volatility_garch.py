@@ -1,111 +1,82 @@
-"""Lab 07 参考答案。"""
+"""Lab 07 审计题参考答案：audit.py 修正后的版本。
+
+修正清单：
+1. vol_forecast 前视：决定第 t 天仓位的方差只能用到 t-1 的收益（r[t-1]，不是 r[t]）。
+   用当天收益更新，等于大波动的那天“提前”降了仓，人为削掉了尾部，Sharpe 和波动稳定性都被高估。
+2. levered_returns 漏了融资成本：权重 w 的组合收益是 w*r - (w-1)*rf（w>1 借钱要付利息，
+   w<1 闲置资金赚无风险利率）。漏掉之后，对无风险资产加杠杆都能凭空赚钱。
+3. expected_growth 漏了波动拖累：对数增长率是 rf + f(mu-rf) - f^2 sigma^2 / 2。
+   杠杆越高，拖累按 f^2 增长；2 倍 Kelly 时增长率回到 rf。
+4. kelly_leverage 忽略了 mu 的估计误差：mu_hat 的标准误约 sigma/sqrt(年数)，
+   代入点估计的完全 Kelly 平均而言会过度下注，在估计误差下期望增长甚至为负。
+   用分数 Kelly（这里取一半）；也可以对 mu 做收缩。
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+
+from quantlab import perf
 
 TRADING_DAYS = 252
+RF = 0.02
+MAX_LEVERAGE = 5.0
+KELLY_FRACTION = 0.5
 
 
-def realized_vol(returns: pd.Series, window: int = 21, periods: int = TRADING_DAYS) -> pd.Series:
-    return returns.rolling(window).std(ddof=1) * np.sqrt(periods)
-
-
-def ewma_variance(returns: pd.Series, lam: float = 0.94, init: float | None = None) -> pd.Series:
+def vol_forecast(returns: pd.Series, lam: float = 0.94) -> pd.Series:
     r = returns.to_numpy(dtype=float)
-    out = np.empty(len(r))
-    out[0] = float(np.mean(r[:20] ** 2)) if init is None else init
+    var = np.empty(len(r))
+    var[0] = float(np.mean(r[:20] ** 2))
     for t in range(1, len(r)):
-        out[t] = lam * out[t - 1] + (1 - lam) * r[t - 1] ** 2
-    return pd.Series(out, index=returns.index, name="ewma_var")
-
-
-def garch_variance(params, eps: np.ndarray) -> np.ndarray:
-    omega, alpha, beta = params
-    eps = np.asarray(eps, dtype=float)
-    var = np.empty(len(eps))
-    var[0] = np.var(eps)
-    for t in range(1, len(eps)):
-        var[t] = omega + alpha * eps[t - 1] ** 2 + beta * var[t - 1]
-    return var
-
-
-def garch_neg_loglik(params, eps: np.ndarray) -> float:
-    var = garch_variance(params, eps)
-    if np.any(var <= 0) or not np.all(np.isfinite(var)):
-        return 1e10
-    eps = np.asarray(eps, dtype=float)
-    return float(0.5 * np.sum(np.log(2 * np.pi) + np.log(var) + eps**2 / var))
-
-
-def _unpack(theta: np.ndarray, sample_var: float) -> tuple[float, float, float]:
-    # 重参数化：persistence = sigmoid(a)，alpha 占比 = sigmoid(b)，长期方差 = sample_var * exp(c)
-    sig = lambda x: 1.0 / (1.0 + np.exp(-x))  # noqa: E731
-    pers = sig(theta[0])
-    frac = sig(theta[1])
-    alpha = pers * frac
-    beta = pers * (1 - frac)
-    long_run = sample_var * np.exp(theta[2])
-    omega = long_run * (1 - pers)
-    return omega, alpha, beta
-
-
-def fit_garch(returns: pd.Series) -> dict[str, float]:
-    r = returns.to_numpy(dtype=float)
-    mu = float(r.mean())
-    eps = r - mu
-    v = float(np.var(eps))
-    # 初值：persistence 0.95, alpha 占比 0.1
-    theta0 = np.array([np.log(0.95 / 0.05), np.log(0.1 / 0.9), 0.0])
-    res = minimize(
-        lambda th: garch_neg_loglik(_unpack(th, v), eps),
-        theta0,
-        method="Nelder-Mead",
-        options={"xatol": 1e-8, "fatol": 1e-8, "maxiter": 5000},
-    )
-    res = minimize(lambda th: garch_neg_loglik(_unpack(th, v), eps), res.x, method="BFGS")
-    omega, alpha, beta = _unpack(res.x, v)
-    return {
-        "mu": mu,
-        "omega": omega,
-        "alpha": alpha,
-        "beta": beta,
-        "loglik": -garch_neg_loglik((omega, alpha, beta), eps),
-    }
-
-
-def long_run_variance(omega: float, alpha: float, beta: float) -> float:
-    return omega / (1 - alpha - beta)
-
-
-def garch_forecast(
-    omega, alpha, beta, last_var: float, last_eps: float, horizon: int
-) -> np.ndarray:
-    vl = long_run_variance(omega, alpha, beta)
-    v1 = omega + alpha * last_eps**2 + beta * last_var
-    h = np.arange(horizon)
-    return vl + (alpha + beta) ** h * (v1 - vl)
-
-
-def half_life(alpha: float, beta: float) -> float:
-    return float(np.log(0.5) / np.log(alpha + beta))
+        var[t] = lam * var[t - 1] + (1 - lam) * r[t - 1] ** 2
+    return pd.Series(np.sqrt(var), index=returns.index, name="sigma")
 
 
 def vol_target_weights(
-    sigma_daily: pd.Series,
-    target_vol: float = 0.10,
-    max_leverage: float = 2.0,
-    periods: int = TRADING_DAYS,
+    returns: pd.Series, target_vol: float = 0.10, max_leverage: float = MAX_LEVERAGE
 ) -> pd.Series:
-    w = target_vol / (sigma_daily * np.sqrt(periods))
-    return w.clip(upper=max_leverage)
+    sigma_annual = vol_forecast(returns) * np.sqrt(TRADING_DAYS)
+    return (target_vol / sigma_annual).clip(upper=max_leverage).rename("weight")
 
 
-def vol_target_returns(
-    returns: pd.Series, target_vol: float = 0.10, lam: float = 0.94, max_leverage: float = 2.0
-) -> pd.Series:
-    sigma = np.sqrt(ewma_variance(returns, lam))
-    w = vol_target_weights(sigma, target_vol, max_leverage)
-    return (w * returns).rename("vol_target")
+def levered_returns(returns: pd.Series, weights: pd.Series, rf: float = RF) -> pd.Series:
+    return (weights * returns - (weights - 1) * rf / TRADING_DAYS).rename("levered")
+
+
+def kelly_leverage(
+    train_returns: pd.Series, rf: float = RF, max_leverage: float = MAX_LEVERAGE
+) -> float:
+    mu = train_returns.mean() * TRADING_DAYS
+    var = train_returns.var(ddof=1) * TRADING_DAYS
+    return float(np.clip(KELLY_FRACTION * (mu - rf) / var, 0.0, max_leverage))
+
+
+def expected_growth(leverage: float, mu: float, sigma: float, rf: float = RF) -> float:
+    return rf + leverage * (mu - rf) - 0.5 * leverage**2 * sigma**2
+
+
+def evaluate(returns: pd.Series, train_frac: float = 0.5, rf: float = RF) -> dict:
+    split = int(len(returns) * train_frac)
+    train, test = returns.iloc[:split], returns.iloc[split:]
+
+    f = kelly_leverage(train, rf)
+    mu_hat = train.mean() * TRADING_DAYS
+    sigma_hat = train.std(ddof=1) * np.sqrt(TRADING_DAYS)
+    growth = expected_growth(f, mu_hat, sigma_hat, rf)
+
+    w = vol_target_weights(returns)
+    vt = levered_returns(returns, w, rf).iloc[split:]
+
+    def vol_of_vol(r: pd.Series) -> float:
+        return float((r.rolling(63).std() * np.sqrt(TRADING_DAYS)).std())
+
+    return {
+        "kelly_leverage": f,
+        "expected_cagr": float(np.expm1(growth)),
+        "sharpe_buy_hold": perf.sharpe(test, rf=rf),
+        "sharpe_vol_target": perf.sharpe(vt, rf=rf),
+        "vol_of_vol_buy_hold": vol_of_vol(test),
+        "vol_of_vol_target": vol_of_vol(vt),
+    }

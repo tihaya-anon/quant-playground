@@ -1,125 +1,155 @@
-"""Lab 09 参考答案。"""
+"""Lab 09 审计题参考答案：audit.py 修正后的版本。
+
+修正清单：
+1. make_features 的 trend 用了居中滚动均值（center=True）：t 日的值用到了 t 之后 10 天的价格，
+   而且和标签（未来 10 天涨跌）直接相关。改成只用过去的普通滚动均值。
+2. scale 用训练段 + 测试段一起估计均值和标准差：测试段的分布信息泄漏进了训练。
+   只用训练段 fit，再 transform 两段。
+3. cv_splits 打乱顺序的 KFold：标签是未来 10 天的收益，相邻样本的标签区间重叠，
+   打乱后测试折里的每个样本，几乎都能在训练折里找到一个“标签几乎相同”的邻居。
+   用 quantlab.ml.PurgedKFold：剔除标签区间与测试折重叠的训练样本，并加 embargo。
+4. choose_k 用测试段选超参数：测试段一旦参与了选择，它的准确率就不再是样本外的。
+   在训练段上用（purged）交叉验证选。
+5. baseline_accuracy 用 0.5：测试段里涨的天数通常不是一半，一个永远猜“涨”的模型就能超过 0.5。
+   基准应是“永远猜训练段里更多的那一类”在测试段上的准确率。
+
+原审计说明如下。
+
+研究报告：机器学习择时，“交叉验证准确率 60%，样本外依然有效”。
+
+背景：一位同事（或者一个 AI 助手）交来了一个机器学习择时模型——
+
+    "用 6 个技术特征预测未来 10 天的涨跌方向，KNN 分类器。
+     5 折交叉验证准确率约 60%，样本外测试段准确率也明显高于 50%，
+     超出随机猜测 5 个百分点以上。建议作为择时信号上线。"
+
+你的任务是做 code review：这份研究流程里有若干处会让结论偏乐观的错误。
+找出它们，在这个文件里改正，直到 `make test LAB=09` 全部通过。
+
+规则：
+- 不要改函数签名和 evaluate() 返回的字典键，测试依赖它们。
+- 改正之前，先在下面的「审计记录」里写下你认为的问题和理由，再动代码。
+- quantlab.ml 里的函数（PurgedKFold、标签工具等）是正确的，可以放心调用。
+
+审计记录（自己填）：
+    1.
+    2.
+    3.
+    ...
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-
 import numpy as np
 import pandas as pd
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+
+from quantlab.ml import PurgedKFold
+
+HORIZON = 10
+K_GRID = [5, 15, 31, 61]
+TEST_FRAC = 0.3
 
 
 def make_features(close: pd.Series) -> pd.DataFrame:
+    """技术特征，第 t 行描述 t 日收盘时的市场状态。"""
     lc = np.log(close)
     r1 = lc.diff()
-    feats = pd.DataFrame(
+    return pd.DataFrame(
         {
-            "ret_1": r1,
             "ret_5": lc.diff(5),
             "ret_20": lc.diff(20),
             "ret_60": lc.diff(60),
             "vol_20": r1.rolling(20).std(),
+            "trend": close / close.rolling(21).mean() - 1,
             "zscore_20": (close - close.rolling(20).mean()) / close.rolling(20).std(),
         },
         index=close.index,
     )
-    return feats
 
 
-def fixed_horizon_labels(close: pd.Series, horizon: int) -> pd.DataFrame:
-    fwd = np.log(close.shift(-horizon) / close)
+def make_labels(close: pd.Series, horizon: int = HORIZON) -> pd.DataFrame:
+    """未来 horizon 天的涨跌方向。列：label（1 涨 / 0 跌），t1（标签结束的日期）。"""
+    fwd = close.shift(-horizon) / close - 1
     t1 = pd.Series(close.index, index=close.index).shift(-horizon)
-    out = pd.DataFrame({"ret": fwd, "label": (fwd > 0).astype(int), "t1": t1})
-    return out.iloc[:-horizon]
+    return pd.DataFrame({"label": (fwd > 0).astype(int), "t1": t1}).iloc[:-horizon]
 
 
-def daily_vol(close: pd.Series, span: int = 50) -> pd.Series:
-    return np.log(close).diff().ewm(span=span).std()
+def scale(x_train: pd.DataFrame, x_test: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """标准化。用全部数据估计均值和标准差，统计量更稳定。"""
+    scaler = StandardScaler().fit(x_train)
+    return scaler.transform(x_train), scaler.transform(x_test)
 
 
-def triple_barrier_labels(
-    close: pd.Series,
-    vol: pd.Series,
-    pt_mult: float = 2.0,
-    sl_mult: float = 2.0,
-    max_holding: int = 20,
-) -> pd.DataFrame:
-    c = close.to_numpy()
-    v = vol.reindex(close.index).to_numpy()
-    idx = close.index
-    rows = []
-    for i in range(len(c) - max_holding):
-        if not np.isfinite(v[i]) or v[i] <= 0:
-            continue
-        up, lo = pt_mult * v[i], -sl_mult * v[i]
-        path = c[i + 1 : i + 1 + max_holding] / c[i] - 1
-        hit_up = np.flatnonzero(path >= up)
-        hit_lo = np.flatnonzero(path <= lo)
-        first_up = hit_up[0] if hit_up.size else max_holding
-        first_lo = hit_lo[0] if hit_lo.size else max_holding
-        if first_up == max_holding and first_lo == max_holding:
-            j, label = max_holding - 1, 0
-        elif first_up < first_lo:
-            j, label = first_up, 1
-        else:
-            j, label = first_lo, -1
-        rows.append((idx[i], idx[i + 1 + j], path[j], label))
-    out = pd.DataFrame(rows, columns=["t0", "t1", "ret", "label"]).set_index("t0")
-    out.index.name = None
-    return out
+def cv_splits(t1: pd.Series, n_splits: int = 5) -> list[tuple[np.ndarray, np.ndarray]]:
+    """交叉验证的切分。t1 的索引是每个样本的开始日期，值是标签结束日期。
+
+    打乱顺序，避免某一折恰好落在单一的市场状态里。
+    """
+    return list(PurgedKFold(n_splits, t1, embargo_pct=0.01).split())
 
 
-def average_uniqueness(t1: pd.Series, bar_index: pd.DatetimeIndex) -> pd.Series:
-    start = bar_index.get_indexer(t1.index)
-    end = bar_index.get_indexer(pd.DatetimeIndex(t1.to_numpy()))
-    # 差分数组：在 start 处 +1、end+1 处 -1，前缀和就是每根 bar 的并发标签数
-    diff = np.zeros(len(bar_index) + 1)
-    np.add.at(diff, start, 1)
-    np.add.at(diff, end + 1, -1)
-    conc = np.cumsum(diff)[:-1]
-    inv = np.concatenate([[0.0], np.cumsum(1.0 / np.where(conc > 0, conc, np.inf))])
-    u = (inv[end + 1] - inv[start]) / (end - start + 1)
-    return pd.Series(u, index=t1.index, name="uniqueness")
-
-
-class PurgedKFold:
-    def __init__(self, n_splits: int, t1: pd.Series, embargo_pct: float = 0.0):
-        self.n_splits = n_splits
-        self.t1 = t1
-        self.embargo_pct = embargo_pct
-
-    def split(self, X=None, y=None, groups=None) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        n = len(self.t1)
-        t0 = self.t1.index.to_numpy()
-        t1 = self.t1.to_numpy()
-        embargo = int(np.ceil(n * self.embargo_pct))
-        for test in np.array_split(np.arange(n), self.n_splits):
-            lo, hi = test[0], test[-1]
-            test_start, test_end = t0[lo], t1[test].max()
-            overlap = (t0 <= test_end) & (t1 >= test_start)
-            emb = np.zeros(n, dtype=bool)
-            emb[hi + 1 : hi + 1 + embargo] = True
-            keep = ~overlap & ~emb
-            keep[test] = False
-            yield np.flatnonzero(keep), test
-
-    def get_n_splits(self, X=None, y=None, groups=None) -> int:
-        return self.n_splits
-
-
-def cv_accuracy(model_factory: Callable, X: pd.DataFrame, y: pd.Series, splits) -> np.ndarray:
+def cv_accuracy(x: np.ndarray, y: np.ndarray, t1: pd.Series, k: int) -> float:
     scores = []
-    Xv, yv = X.to_numpy(), y.to_numpy()
-    for tr, te in splits:
-        m = model_factory()
-        m.fit(Xv[tr], yv[tr])
-        scores.append(float(np.mean(m.predict(Xv[te]) == yv[te])))
-    return np.array(scores)
+    for tr, te in cv_splits(t1):
+        model = KNeighborsClassifier(n_neighbors=k).fit(x[tr], y[tr])
+        scores.append(float(np.mean(model.predict(x[te]) == y[te])))
+    return float(np.mean(scores))
 
 
-def purged_train_test_split(t1: pd.Series, test_frac: float = 0.3) -> tuple[np.ndarray, np.ndarray]:
-    n = len(t1)
-    split = int(n * (1 - test_frac))
-    test = np.arange(split, n)
-    test_start = t1.index[split]
-    train = np.flatnonzero(t1.to_numpy()[:split] < test_start)
-    return train, test
+def choose_k(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    t1_train: pd.Series,
+    x_test: np.ndarray,
+    y_test: np.ndarray,
+) -> int:
+    """在 K_GRID 里选近邻数。"""
+    scores = [cv_accuracy(x_train, y_train, t1_train, k) for k in K_GRID]
+    return K_GRID[int(np.argmax(scores))]
+
+
+def baseline_accuracy(y_train: np.ndarray, y_test: np.ndarray) -> float:
+    """不用任何特征时能达到的准确率：随机猜测。"""
+    majority = int(np.mean(y_train) >= 0.5)
+    return float(np.mean(y_test == majority))
+
+
+def evaluate(close: pd.Series) -> dict:
+    """完整的研究流程，返回结论。
+
+    返回字典：
+        k              选出的近邻数
+        cv_accuracy    训练段交叉验证准确率
+        test_accuracy  测试段准确率
+        baseline       不用任何特征时的准确率
+        edge           test_accuracy - baseline
+        verdict        "signal" 或 "noise"
+    """
+    feats = make_features(close)
+    labels = make_labels(close)
+    data = feats.join(labels, how="inner").dropna()
+    x, y, t1 = data[feats.columns], data["label"].to_numpy(), data["t1"]
+
+    split = int(len(data) * (1 - TEST_FRAC))
+    # 训练段的最后 HORIZON 个样本，标签延伸进了测试段，丢掉
+    train_end = split - HORIZON
+    x_tr, x_te = scale(x.iloc[:train_end], x.iloc[split:])
+    y_tr, y_te = y[:train_end], y[split:]
+    t1_tr = t1.iloc[:train_end]
+
+    k = choose_k(x_tr, y_tr, t1_tr, x_te, y_te)
+    cv = cv_accuracy(x_tr, y_tr, t1_tr, k)
+    model = KNeighborsClassifier(n_neighbors=k).fit(x_tr, y_tr)
+    test_acc = float(np.mean(model.predict(x_te) == y_te))
+    base = baseline_accuracy(y_tr, y_te)
+    edge = test_acc - base
+    return {
+        "k": k,
+        "cv_accuracy": cv,
+        "test_accuracy": test_acc,
+        "baseline": base,
+        "edge": edge,
+        "verdict": "signal" if edge > 0.03 else "noise",
+    }

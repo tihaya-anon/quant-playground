@@ -5,8 +5,8 @@
     from labs._harness import load_impl
     lab = load_impl(__file__)
 
-默认加载同目录的 lab.py（你要填的那个）。设置环境变量 QUANT_SOLUTIONS=1 时改为加载
-solutions/<lab 目录名>.py —— 这是用来确认测试本身是对的，或者卡住时对照用的。
+默认加载同目录的 <module>.py（lab.py，或审计题的 audit.py）。设置环境变量 QUANT_SOLUTIONS=1
+时改为加载 solutions/<lab 目录名>.py —— 这是用来确认测试本身是对的，或者卡住时对照用的。
 """
 
 from __future__ import annotations
@@ -20,22 +20,22 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def impl_path(test_file: str | Path) -> Path:
+def impl_path(test_file: str | Path, module: str = "lab") -> Path:
     lab_dir = Path(test_file).resolve().parent
     if os.environ.get("QUANT_SOLUTIONS") == "1":
         return ROOT / "solutions" / f"{lab_dir.name}.py"
-    return lab_dir / "lab.py"
+    return lab_dir / f"{module}.py"
 
 
-def load_impl(test_file: str | Path) -> ModuleType:
-    path = impl_path(test_file)
+def load_impl(test_file: str | Path, module: str = "lab") -> ModuleType:
+    path = impl_path(test_file, module)
     name = f"_impl_{path.parent.name}_{path.stem}"
     if name in sys.modules:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod

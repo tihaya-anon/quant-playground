@@ -1,9 +1,9 @@
 # 常用命令。容器内（devcontainer / hack/agent.sh shell）直接用；宿主机上需要先 `uv sync`。
 #
-#   make test LAB=03            跑 lab03 的测试（你的实现）
+#   make test LAB=03            检查你修改后的 lab03 audit.py
 #   make test LAB=03 K=sharpe   只跑名字含 sharpe 的测试
-#   make check                  用参考答案跑全部测试（验证测试本身）
-#   make progress               每个 lab 通过了多少测试
+#   make check                  用参考答案跑全部测试（含 tests/ 下的库测试）
+#   make progress               每个 lab 的审计通过了多少检查
 #   make jupyter                启动 JupyterLab（localhost:8888）
 
 SHELL := /bin/bash
@@ -11,7 +11,7 @@ SHELL := /bin/bash
 RUN := $(if $(VIRTUAL_ENV),,uv run --frozen)
 LAB ?=
 K ?=
-LAB_DIR = $(if $(LAB),$(wildcard labs/lab$(LAB)_*),labs)
+LAB_DIR = $(if $(LAB),$(wildcard labs/lab$(LAB)_*),)
 KFLAG = $(if $(K),-k "$(K)",)
 
 .PHONY: help test check progress lint fmt jupyter clean

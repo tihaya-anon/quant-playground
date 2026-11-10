@@ -6,4 +6,4 @@ extend-exclude = ["hack/agent-home"]
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD"]
-ignore = ["E741"]
+ignore = ["E741", "PD013"]  # PD013: .stack() is idiomatic for panel data

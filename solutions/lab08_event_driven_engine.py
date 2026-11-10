@@ -1,76 +1,86 @@
-"""Lab 08 参考答案。"""
+"""Lab 08 审计题参考答案：audit.py 修正后的版本。
+
+修正清单：
+1. AuditEngine 按信号 bar 的收盘价成交市价单：收盘价在收盘之后才知道，而且它本身带着
+   买卖价差反弹——“跌了就买”恰好常常买在 bid 上，这部分“alpha”无法成交。
+   删掉自定义的 run，用 quantlab.engine.Engine：订单最早在下一根 bar 开盘成交。
+2. commission 用了带符号的 quantity：卖单的比例佣金为负，被 max() 换成了最低佣金，
+   卖出几乎不付佣金。用 abs(quantity)。
+3. 市价单滑点不分方向：卖出也按 open*(1+slip) 成交，等于卖在了更好的价格。
+   滑点总是不利于你：买 open*(1+slip)，卖 open*(1-slip)。
+4. 限价单“触及即成交”：价格刚好碰到你的限价时，排在队列后面的你多半没有成交；
+   保守的假设是价格至少穿过限价一个 tick 才算成交。这同时刻画了逆向选择：你能成交的，
+   恰恰是价格继续往不利方向走的那些情况；价格碰一下就反弹的“好成交”，你往往拿不到。
+5. 没有成交量约束：单根 bar 最多成交 participation * volume，剩余部分留到之后的 bar。
+
+原审计说明如下。
+
+研究报告：小盘股短线反转，“扣费后 Sharpe 超过 1”。
+
+背景：一位同事用事件驱动引擎回测了一个短线反转策略——
+
+    "单日跌幅超过 1.5% 就在收盘买入，次日起挂 1% 的止盈限价单，最多持有 3 天。
+     成交模型已经包含了滑点和佣金（含最低佣金），回测 6 年，扣费后 Sharpe 超过 1。
+     建议在一篮子流动性较差的小盘股上上线。"
+
+引擎（quantlab.engine）本身是对的。问题出在这份回测**配置的成交假设**上：
+下面的 AuditBroker 和 AuditEngine 是同事为了“更贴近实盘”自己写的。
+
+你的任务是做 code review：找出会让结论偏乐观的错误，在这个文件里改正，
+直到 `make test LAB=08` 全部通过。
+
+规则：
+- 不要改类名、函数签名和 evaluate() 返回的字典键，测试依赖它们。
+- 改正之前，先在下面的「审计记录」里写下你认为的问题和理由，再动代码。
+- quantlab.engine 里的 Order / Fill / Broker / Portfolio / Engine 是正确的，可以放心复用。
+
+审计记录（自己填）：
+    1.
+    2.
+    3.
+    ...
+"""
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
-_ids = itertools.count(1)
+from quantlab import engine, perf
+from quantlab.engine import Fill, Order
+
+TICK = 0.01
 
 
-@dataclass
-class Order:
-    symbol: str
-    quantity: float
-    order_type: str = "market"
-    limit_price: float | None = None
-    created_at: pd.Timestamp | None = None
-    id: int = field(default_factory=lambda: next(_ids))
+class AuditBroker(engine.Broker):
+    """更贴近实盘的成交模型：滑点、佣金（含最低佣金）、限价单、成交量约束。
 
-    def __post_init__(self):
-        if self.order_type not in ("market", "limit"):
-            raise ValueError(f"unknown order_type {self.order_type!r}")
-        if self.order_type == "limit" and self.limit_price is None:
-            raise ValueError("limit order needs limit_price")
-        if self.quantity == 0:
-            raise ValueError("quantity must be non-zero")
+    participation: 单根 bar 内最多成交该 bar 成交量的这个比例。
+    """
 
-
-@dataclass(frozen=True)
-class Fill:
-    timestamp: pd.Timestamp
-    symbol: str
-    quantity: float
-    price: float
-    commission: float
-    order_id: int
-
-
-class Broker:
     def __init__(
-        self, commission_rate: float = 0.0, min_commission: float = 0.0, slippage_bps: float = 0.0
+        self,
+        commission_rate: float = 3e-4,
+        min_commission: float = 5.0,
+        slippage_bps: float = 10.0,
+        participation: float = 0.05,
     ):
-        self.commission_rate = commission_rate
-        self.min_commission = min_commission
-        self.slippage_bps = slippage_bps
-        self._open: list[Order] = []
-
-    @property
-    def open_orders(self) -> list[Order]:
-        return list(self._open)
-
-    def submit(self, order: Order) -> None:
-        self._open.append(order)
-
-    def cancel_all(self) -> None:
-        self._open.clear()
+        super().__init__(commission_rate, min_commission, slippage_bps)
+        self.participation = participation
 
     def commission(self, quantity: float, price: float) -> float:
         return max(self.min_commission, self.commission_rate * abs(quantity) * price)
 
     def _fill_price(self, order: Order, bar: Mapping[str, float]) -> float | None:
         o, h, lo = bar["open"], bar["high"], bar["low"]
-        side = np.sign(order.quantity)
+        side = 1.0 if order.quantity > 0 else -1.0
         if order.order_type == "market":
             return o * (1 + side * self.slippage_bps * 1e-4)
         lim = order.limit_price
         if side > 0:
-            return min(o, lim) if lo <= lim else None
-        return max(o, lim) if h >= lim else None
+            return min(o, lim) if lo < lim - TICK else None
+        return max(o, lim) if h > lim + TICK else None
 
     def process_bar(
         self, timestamp: pd.Timestamp, bars: Mapping[str, Mapping[str, float]]
@@ -82,121 +92,86 @@ class Broker:
             if price is None:
                 remaining.append(order)
                 continue
-            fills.append(
-                Fill(
-                    timestamp,
-                    order.symbol,
-                    order.quantity,
-                    price,
-                    self.commission(order.quantity, price),
-                    order.id,
-                )
+            cap = self.participation * bar["volume"]
+            qty = (
+                order.quantity
+                if abs(order.quantity) <= cap
+                else cap * (1 if order.quantity > 0 else -1)
             )
+            fills.append(
+                Fill(timestamp, order.symbol, qty, price, self.commission(qty, price), order.id)
+            )
+            left = order.quantity - qty
+            if abs(left) > 1e-9:
+                order.quantity = left
+                remaining.append(order)
         self._open = remaining
         return fills
 
 
-class Portfolio:
-    def __init__(self, cash: float = 1_000_000.0):
-        self.initial_cash = cash
-        self.cash = cash
-        self.positions: dict[str, float] = {}
-        self.avg_cost: dict[str, float] = {}
-        self.realized_pnl = 0.0
-        self.total_commission = 0.0
-        self.fills: list[Fill] = []
-        self._history: list[tuple[pd.Timestamp, float]] = []
-
-    def position(self, symbol: str) -> float:
-        return self.positions.get(symbol, 0.0)
-
-    def apply_fill(self, fill: Fill) -> None:
-        sym, q, x = fill.symbol, fill.quantity, fill.price
-        p = self.position(sym)
-        c = self.avg_cost.get(sym, 0.0)
-        if p == 0 or np.sign(p) == np.sign(q):
-            new_p = p + q
-            self.avg_cost[sym] = (p * c + q * x) / new_p
-        else:
-            closed = min(abs(q), abs(p))
-            self.realized_pnl += closed * (x - c) * np.sign(p)
-            new_p = p + q
-            if new_p == 0:
-                self.avg_cost[sym] = 0.0
-            elif np.sign(new_p) != np.sign(p):
-                self.avg_cost[sym] = x
-        self.positions[sym] = new_p
-        self.cash -= q * x + fill.commission
-        self.total_commission += fill.commission
-        self.fills.append(fill)
-
-    def market_value(self, prices: Mapping[str, float]) -> float:
-        return float(sum(q * prices[s] for s, q in self.positions.items() if q != 0))
-
-    def equity(self, prices: Mapping[str, float]) -> float:
-        return self.cash + self.market_value(prices)
-
-    def unrealized_pnl(self, prices: Mapping[str, float]) -> float:
-        return float(
-            sum(q * (prices[s] - self.avg_cost[s]) for s, q in self.positions.items() if q != 0)
-        )
-
-    def record(self, timestamp: pd.Timestamp, prices: Mapping[str, float]) -> None:
-        self._history.append((timestamp, self.equity(prices)))
-
-    def equity_curve(self) -> pd.Series:
-        if not self._history:
-            return pd.Series(dtype=float, name="equity")
-        ts, eq = zip(*self._history, strict=True)
-        return pd.Series(eq, index=pd.DatetimeIndex(ts, name="date"), name="equity")
+class AuditEngine(engine.Engine):
+    """订单最早在下一根 bar 撮合：直接使用 quantlab.engine.Engine 的事件顺序。"""
 
 
-class Strategy:
-    def on_bar(
-        self, timestamp: pd.Timestamp, bars: Mapping[str, Mapping[str, float]], portfolio: Portfolio
-    ) -> list[Order]:
-        return []
+class ReversalStrategy(engine.Strategy):
+    """跌幅超过 threshold 就买入 shares 股；持仓后挂止盈限价单，最多持有 max_hold 根 bar。"""
 
-
-class TargetPositionStrategy(Strategy):
-    def __init__(self, symbol: str, targets: pd.Series):
-        self.symbol = symbol
-        self.targets = targets
-
-    def on_bar(self, timestamp, bars, portfolio):
-        target = float(self.targets.get(timestamp, 0.0))
-        delta = target - portfolio.position(self.symbol)
-        if delta == 0:
-            return []
-        return [Order(self.symbol, delta, created_at=timestamp)]
-
-
-class Engine:
     def __init__(
         self,
-        data: dict[str, pd.DataFrame] | pd.DataFrame,
-        strategy: Strategy,
-        broker: Broker | None = None,
-        portfolio: Portfolio | None = None,
         symbol: str = "ASSET",
+        shares: float = 2000,
+        threshold: float = 0.015,
+        take_profit: float = 0.01,
+        max_hold: int = 3,
     ):
-        self.data = {symbol: data} if isinstance(data, pd.DataFrame) else dict(data)
-        self.strategy = strategy
-        self.broker = broker or Broker()
-        self.portfolio = portfolio or Portfolio()
+        self.symbol, self.shares = symbol, shares
+        self.threshold, self.take_profit, self.max_hold = threshold, take_profit, max_hold
+        self.prev_close: float | None = None
+        self.held = 0
+        self.tp_live = False
 
-    def run(self) -> pd.Series:
-        index = sorted(set().union(*(df.index for df in self.data.values())))
-        last_close: dict[str, float] = {}
-        for ts in index:
-            bars = {s: df.loc[ts].to_dict() for s, df in self.data.items() if ts in df.index}
-            for fill in self.broker.process_bar(ts, bars):
-                self.portfolio.apply_fill(fill)
-            for s, b in bars.items():
-                last_close[s] = b["close"]
-            self.portfolio.record(ts, last_close)
-            for order in self.strategy.on_bar(ts, bars, self.portfolio):
-                if order.created_at is None:
-                    order.created_at = ts
-                self.broker.submit(order)
-        return self.portfolio.equity_curve()
+    def on_bar(self, timestamp, bars, portfolio):
+        bar = bars.get(self.symbol)
+        if bar is None:
+            return []
+        close = bar["close"]
+        ret = None if self.prev_close is None else close / self.prev_close - 1
+        self.prev_close = close
+        pos = portfolio.position(self.symbol)
+        orders: list[Order] = []
+        if pos > 0:
+            self.held += 1
+            if not self.tp_live:
+                cost = portfolio.avg_cost[self.symbol]
+                orders.append(
+                    Order(self.symbol, -pos, "limit", limit_price=cost * (1 + self.take_profit))
+                )
+                self.tp_live = True
+            elif self.held >= self.max_hold:
+                orders.append(Order(self.symbol, -pos))
+        else:
+            self.held, self.tp_live = 0, False
+            if ret is not None and ret < -self.threshold:
+                orders.append(Order(self.symbol, self.shares))
+        return orders
+
+
+def evaluate(ohlcv: pd.DataFrame, cash: float = 1_000_000.0) -> dict:
+    """跑一遍回测，返回研究结论。
+
+    返回字典：
+        sharpe        日收益年化 Sharpe（扣费后）
+        total_return  总收益
+        n_fills       成交笔数
+        commission    总佣金
+    """
+    broker = AuditBroker()
+    eng = AuditEngine(ohlcv, ReversalStrategy(), broker=broker, portfolio=engine.Portfolio(cash))
+    eq = eng.run()
+    rets = eq.pct_change().dropna()
+    return {
+        "sharpe": perf.sharpe(rets),
+        "total_return": float(eq.iloc[-1] / cash - 1),
+        "n_fills": len(eng.portfolio.fills),
+        "commission": eng.portfolio.total_commission,
+    }

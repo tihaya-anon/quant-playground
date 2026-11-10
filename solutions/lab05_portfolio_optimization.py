@@ -1,109 +1,96 @@
-"""Lab 05 参考答案。"""
+"""Lab 05 审计题参考答案：audit.py 修正后的版本。
+
+修正清单：
+1. backtest 用全部历史一次估计参数：每个再平衡日用到了它之后的数据，是前视。
+   切点组合在样本内“恰好”是最优的，所以样本内 Sharpe 一定好看。
+   每个再平衡日只能用它之前 WINDOW 天的数据估计。
+2. tangency 用 x / x.sum() 归一化：当 1'Σ^{-1}mu < 0 时（估计的 mu 普遍为负，或多空抵消），
+   除以负数会把整个组合翻过来，变成预期收益为负的组合。按总敞口归一化：x / |x|.sum()。
+3. 忽略成本：每月重新估计的切点组合权重变化很大，换手很高。按换手扣成本。
+4. 报告的波动率是优化器的事前估计 w'Σw：优化器恰恰挑中了估计误差最有利的方向，
+   事前风险系统性地低估事后风险。报告实际实现的波动率。
+"""
 
 from __future__ import annotations
 
-import cvxpy as cp
 import numpy as np
+import pandas as pd
+
+TRADING_DAYS = 252
+WINDOW = 126  # 用最近半年的数据估计参数，反映最新的市场状况
+COST_BPS = 10.0
 
 
-def portfolio_vol(w, cov) -> float:
-    w = np.asarray(w, dtype=float)
-    return float(np.sqrt(w @ cov @ w))
+def estimate_inputs(window: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """由一段日收益估计年化的期望收益向量与协方差矩阵。"""
+    mu = window.mean().to_numpy() * TRADING_DAYS
+    cov = window.cov().to_numpy() * TRADING_DAYS
+    return mu, cov
 
 
-def min_variance_weights(cov) -> np.ndarray:
-    ones = np.ones(len(cov))
-    x = np.linalg.solve(cov, ones)
-    return x / x.sum()
+def tangency(mu: np.ndarray, cov: np.ndarray) -> np.ndarray:
+    """切点组合（最大 Sharpe）：w ∝ Σ^{-1} mu。"""
+    x = np.linalg.solve(cov, mu)
+    return x / np.abs(x).sum()
 
 
-def tangency_weights(mu, cov, rf: float = 0.0) -> np.ndarray:
-    ex = np.asarray(mu, dtype=float) - rf
-    x = np.linalg.solve(cov, ex)
-    return x / x.sum()
+def rebalance_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """每月最后一个交易日。"""
+    s = pd.Series(index, index=index)
+    return pd.DatetimeIndex(s.groupby([index.year, index.month]).max().to_numpy())
 
 
-def frontier_weights(mu, cov, target: float) -> np.ndarray:
-    mu = np.asarray(mu, dtype=float)
-    ones = np.ones(len(mu))
-    inv_1 = np.linalg.solve(cov, ones)
-    inv_mu = np.linalg.solve(cov, mu)
-    a = ones @ inv_1
-    b = ones @ inv_mu
-    c = mu @ inv_mu
-    d = a * c - b**2
-    lam = (c - b * target) / d
-    gam = (a * target - b) / d
-    return lam * inv_1 + gam * inv_mu
+def backtest(
+    returns: pd.DataFrame, cost_bps: float = COST_BPS
+) -> tuple[pd.Series, pd.DataFrame, float]:
+    """每月再平衡的切点组合。返回 (日净收益, 每个再平衡日的目标权重, 组合的年化波动率)。"""
+    dates = [d for d in rebalance_dates(returns.index) if returns.index.get_loc(d) >= WINDOW]
+
+    rows, predicted = [], []
+    for d in dates:
+        window = returns.loc[:d].iloc[-WINDOW:]
+        mu, cov = estimate_inputs(window)
+        w = tangency(mu, cov)
+        rows.append(w)
+        predicted.append(float(np.sqrt(w @ cov @ w)))  # 事前风险：只用于对比，不对外报告
+    targets = pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=returns.columns)
+
+    held = targets.reindex(returns.index).ffill().shift(1)
+    held = held.loc[held.notna().all(axis=1)]
+    gross = (held * returns.loc[held.index]).sum(axis=1)
+    turnover = held.diff().abs().sum(axis=1).fillna(held.iloc[0].abs().sum())
+    net = gross - turnover * cost_bps / 1e4
+
+    vol = float(net.std(ddof=1) * np.sqrt(TRADING_DAYS))
+    return net, targets, vol
 
 
-def efficient_frontier(mu, cov, targets) -> np.ndarray:
-    return np.array([portfolio_vol(frontier_weights(mu, cov, t), cov) for t in targets])
+def equal_weight(returns: pd.DataFrame) -> pd.Series:
+    """每日再平衡的等权组合（对照组）。"""
+    return returns.mean(axis=1)
 
 
-def risk_contributions(w, cov) -> np.ndarray:
-    w = np.asarray(w, dtype=float)
-    marginal = cov @ w
-    rc = w * marginal
-    return rc / rc.sum()
+def evaluate(returns: pd.DataFrame, cost_bps: float = COST_BPS) -> dict:
+    """返回字典：
+    sharpe         策略年化 Sharpe（扣成本后）
+    vol            报告的组合年化波动率
+    ew_sharpe      同期等权组合的年化 Sharpe
+    daily_returns  策略日收益（pd.Series）
+    weights        每个再平衡日的目标权重（pd.DataFrame）
+    verdict        "beats 1/N" 或 "no better than 1/N"
+    """
+    net, targets, vol = backtest(returns, cost_bps)
+    ew = equal_weight(returns).loc[net.index]
 
+    def ann_sharpe(r: pd.Series) -> float:
+        return float(r.mean() / r.std(ddof=1) * np.sqrt(TRADING_DAYS))
 
-def risk_parity_weights(cov, tol: float = 1e-10, max_iter: int = 10_000) -> np.ndarray:
-    cov = np.asarray(cov, dtype=float)
-    w = 1 / np.sqrt(np.diag(cov))
-    w /= w.sum()
-    for _ in range(max_iter):
-        # 固定点迭代：w_i ∝ 1 / (Σw)_i 的平方根形式（Spinu/Chaves 风格）
-        m = cov @ w
-        w_new = np.sqrt(w / m)
-        w_new /= w_new.sum()
-        if np.max(np.abs(w_new - w)) < tol:
-            w = w_new
-            break
-        w = w_new
-    return w
-
-
-def ledoit_wolf(returns) -> tuple[np.ndarray, float]:
-    X = np.asarray(returns, dtype=float)
-    X = X - X.mean(axis=0)
-    n, p = X.shape
-    emp = X.T @ X / n
-    mu = np.trace(emp) / p
-    X2 = X**2
-    phi = (X2.T @ X2).sum() / n - (emp**2).sum()
-    gamma = ((emp - mu * np.eye(p)) ** 2).sum()
-    shrink = 0.0 if gamma == 0 else min(1.0, max(0.0, phi / n / gamma))
-    return (1 - shrink) * emp + shrink * mu * np.eye(p), float(shrink)
-
-
-def mean_variance_cvxpy(
-    mu, cov, risk_aversion: float, long_only: bool = True, max_weight=None
-) -> np.ndarray:
-    n = len(mu)
-    w = cp.Variable(n)
-    obj = cp.Maximize(np.asarray(mu) @ w - 0.5 * risk_aversion * cp.quad_form(w, cp.psd_wrap(cov)))
-    cons = [cp.sum(w) == 1]
-    if long_only:
-        cons.append(w >= 0)
-    if max_weight is not None:
-        cons.append(w <= max_weight)
-    cp.Problem(obj, cons).solve()
-    return np.asarray(w.value).ravel()
-
-
-def oos_min_variance(
-    train, test, estimator: str = "sample", periods: int = 252
-) -> tuple[float, float]:
-    train = np.asarray(train, dtype=float)
-    test = np.asarray(test, dtype=float)
-    if estimator == "sample":
-        cov = np.cov(train, rowvar=False)
-    elif estimator == "ledoit_wolf":
-        cov, _ = ledoit_wolf(train)
-    else:
-        raise ValueError(estimator)
-    w = min_variance_weights(cov)
-    predicted = portfolio_vol(w, cov) * np.sqrt(periods)
-    realized = float((test @ w).std(ddof=1) * np.sqrt(periods))
-    return predicted, realized
+    s, s_ew = ann_sharpe(net), ann_sharpe(ew)
+    return {
+        "sharpe": s,
+        "vol": vol,
+        "ew_sharpe": s_ew,
+        "daily_returns": net,
+        "weights": targets,
+        "verdict": "beats 1/N" if s > s_ew + 0.3 else "no better than 1/N",
+    }

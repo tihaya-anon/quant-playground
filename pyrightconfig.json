@@ -1,0 +1,27 @@
+{
+  // Pylance (VS Code) and pyright both read this file. Kept out of pyproject.toml because the
+  // Docker venv layer is keyed on pyproject.toml.
+  //
+  // Research code is pandas/numpy-heavy, and their type stubs cannot follow what the code actually
+  // does: np.sign(series) is typed as ndarray although it returns a Series, df.mean() is
+  // "Series | float", boolean Series in `if` are flagged, and so on. Under "standard" mode that is
+  // ~60 errors of noise across the repo, which buries the few that matter. So type-inference rules
+  // are off, and only the checks that catch real bugs stay on.
+  "include": ["src", "labs", "solutions", "tests", "notebooks"],
+  "extraPaths": ["src", "."],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "off",
+
+  // Real bugs: these stay loud.
+  "reportUndefinedVariable": "error",
+  "reportMissingImports": "warning",
+  "reportPossiblyUnbound": "warning",
+  "reportRedeclaration": "warning",
+  "reportSelfClsParameterName": "warning",
+  "reportUnusedCoroutine": "warning",
+  "reportOptionalMemberAccess": "none",
+
+  // Off: with pandas it is mostly false positives ("DataFrame | Series" is not "Series"), and
+  // squiggles in labs/*/audit.py would mislead the code review those files exist for.
+  "reportReturnType": "none"
+}

@@ -1,120 +1,105 @@
-"""Lab 10 参考答案。"""
+"""Lab 10 审计题参考答案：audit.py 修正后的版本。
+
+修正清单：
+1. selling_vol 前视偏差：用期权存续期（未来 21 天）的已实现波动率给期权定价，等于卖出时就知道
+   未来会有多波动——每份期权的隐含波动率都恰好比未来实现的高 10%，卖方几乎稳赚。
+   卖出时只能用当时已知的信息：过去 21 天的已实现波动率（再 shift 一天）。
+2. clean_returns 把崩盘当成数据错误删掉了：卖波动率策略的风险恰恰集中在这些日子里。
+   超过 5 个标准差的日收益在真实市场里不罕见（肥尾），不能仅凭大小判定为错误；
+   要核对数据源（是否除权、是否错价），而不是按阈值一刀切。
+3. 价差方向错了：卖出成交在买价（bid），权利金是中间价减去半个价差，不是加上。
+4. tail_risk 用正态分布算 CVaR：卖保险型策略的收益严重负偏，正态假设系统性低估尾部亏损。
+   用历史 CVaR（最差 5% 月份的实际平均亏损）。
+"""
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import brentq
+import pandas as pd
 from scipy.stats import norm
 
+from quantlab import options
 
-def d1_d2(S, K, T, r, sigma, q=0.0):
-    S, K, T, sigma = (np.asarray(v, dtype=float) for v in (S, K, T, sigma))
-    vs = sigma * np.sqrt(T)
-    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / vs
-    return d1, d1 - vs
-
-
-def bs_price(S, K, T, r, sigma, q=0.0, kind="call"):
-    d1, d2 = d1_d2(S, K, T, r, sigma, q)
-    df_q, df_r = np.exp(-q * T), np.exp(-r * T)
-    if kind == "call":
-        out = S * df_q * norm.cdf(d1) - K * df_r * norm.cdf(d2)
-    elif kind == "put":
-        out = K * df_r * norm.cdf(-d2) - S * df_q * norm.cdf(-d1)
-    else:
-        raise ValueError(kind)
-    return float(out) if np.ndim(out) == 0 else out
+TRADING_DAYS = 252
+HOLD = 21  # 每份期权持有 21 个交易日（约 1 个月）到期
+VRP = 1.10  # 隐含波动率相对已实现波动率的溢价（市场常见水平）
+HALF_SPREAD = 0.02  # 期权买卖价差的一半，占权利金的比例
+RISK_LIMIT = 0.04  # 风控：最差 5% 月份的平均亏损不得超过名义本金的 4%
 
 
-def put_call_parity_gap(call, put, S, K, T, r, q=0.0):
-    return call - put - (S * np.exp(-q * T) - K * np.exp(-r * T))
+def clean_returns(returns: pd.Series) -> pd.Series:
+    """大收益不是数据错误的证据；只处理真正的缺失值。"""
+    return returns.fillna(0.0)
 
 
-def greeks(S, K, T, r, sigma, q=0.0, kind="call"):
-    d1, d2 = d1_d2(S, K, T, r, sigma, q)
-    d1, d2 = float(d1), float(d2)
-    df_q, df_r = np.exp(-q * T), np.exp(-r * T)
-    pdf = norm.pdf(d1)
-    gamma = df_q * pdf / (S * sigma * np.sqrt(T))
-    vega = S * df_q * pdf * np.sqrt(T)
-    common = -S * df_q * pdf * sigma / (2 * np.sqrt(T))
-    if kind == "call":
-        delta = df_q * norm.cdf(d1)
-        theta = common + q * S * df_q * norm.cdf(d1) - r * K * df_r * norm.cdf(d2)
-        rho = K * T * df_r * norm.cdf(d2)
-    elif kind == "put":
-        delta = -df_q * norm.cdf(-d1)
-        theta = common - q * S * df_q * norm.cdf(-d1) + r * K * df_r * norm.cdf(-d2)
-        rho = -K * T * df_r * norm.cdf(-d2)
-    else:
-        raise ValueError(kind)
-    return {"delta": delta, "gamma": gamma, "vega": vega, "theta": theta, "rho": rho}
+def selling_vol(returns: pd.Series) -> pd.Series:
+    """第 t 天卖出时的隐含波动率：用截至 t-1 的过去 HOLD 天已实现波动率乘以 VRP。"""
+    trailing = returns.rolling(HOLD).std().shift(1)
+    return trailing * np.sqrt(TRADING_DAYS) * VRP
 
 
-def implied_vol(price, S, K, T, r, q=0.0, kind="call", tol=1e-10, max_iter=50):
-    lo_bound = bs_price(S, K, T, r, 1e-9, q, kind)
-    hi_bound = bs_price(S, K, T, r, 10.0, q, kind)
-    if not (lo_bound - tol <= price <= hi_bound + tol):
-        raise ValueError("price outside no-arbitrage bounds")
-    sigma = 0.2
-    for _ in range(max_iter):
-        diff = bs_price(S, K, T, r, sigma, q, kind) - price
-        if abs(diff) < tol:
-            return sigma
-        vega = greeks(S, K, T, r, sigma, q, kind)["vega"]
-        if vega < 1e-8:
-            break
-        new = sigma - diff / vega
-        if not (1e-6 < new < 10.0):
-            break
-        sigma = new
-    return brentq(lambda s: bs_price(S, K, T, r, s, q, kind) - price, 1e-9, 10.0, xtol=1e-14)
+def _straddle(S, T, sigma):
+    """平值（K=1）跨式期权的价格与 delta（向量化）。"""
+    price = options.bs_price(S, 1.0, T, 0.0, sigma, kind="call") + options.bs_price(
+        S, 1.0, T, 0.0, sigma, kind="put"
+    )
+    d1, _ = options.d1_d2(S, 1.0, T, 0.0, sigma)
+    return price, 2 * norm.cdf(d1) - 1
 
 
-def mc_price(S, K, T, r, sigma, q=0.0, kind="call", n_paths=100_000, seed=None, method="plain"):
-    rng = np.random.default_rng(seed)
-    disc = np.exp(-r * T)
+def monthly_pnl(returns: pd.Series, half_spread: float = HALF_SPREAD) -> pd.Series:
+    """每月卖出一份平值跨式（名义本金 1），每日 delta 对冲，持有到期。
 
-    def terminal(z):
-        return S * np.exp((r - q - 0.5 * sigma**2) * T + sigma * np.sqrt(T) * z)
+    返回每份期权的 P&L（以名义本金为单位），索引为卖出日。
+    """
+    r = clean_returns(returns)
+    vol = selling_vol(r)
+    starts = np.arange(HOLD, len(r) - HOLD, HOLD)
+    rr = r.to_numpy()
 
-    def payoff(st):
-        return np.maximum(st - K, 0.0) if kind == "call" else np.maximum(K - st, 0.0)
+    paths = np.ones((len(starts), HOLD + 1))
+    for j in range(HOLD):
+        paths[:, j + 1] = paths[:, j] * (1 + rr[starts + j])
 
-    if method == "plain":
-        y = disc * payoff(terminal(rng.standard_normal(n_paths)))
-    elif method == "antithetic":
-        z = rng.standard_normal(n_paths // 2)
-        y = 0.5 * disc * (payoff(terminal(z)) + payoff(terminal(-z)))
-    elif method == "control":
-        st = terminal(rng.standard_normal(n_paths))
-        y0 = disc * payoff(st)
-        c = disc * st
-        c_mean = S * np.exp(-q * T)
-        cov = np.cov(y0, c)
-        b = cov[0, 1] / cov[1, 1]
-        y = y0 - b * (c - c_mean)
-    else:
-        raise ValueError(method)
-    return float(y.mean()), float(y.std(ddof=1) / np.sqrt(len(y)))
+    sigma = vol.to_numpy()[starts]
+    mid, _ = _straddle(1.0, HOLD / TRADING_DAYS, sigma)
+    premium = mid * (1 - half_spread)  # 卖出成交在买价
+
+    hedge = np.zeros(len(starts))
+    for j in range(HOLD):
+        _, delta = _straddle(paths[:, j], (HOLD - j) / TRADING_DAYS, sigma)
+        hedge += delta * (paths[:, j + 1] - paths[:, j])
+
+    payoff = np.abs(paths[:, -1] - 1.0)
+    return pd.Series(premium - payoff + hedge, index=r.index[starts], name="pnl")
 
 
-def delta_hedge_pnl(S0, K, T, r, sigma_real, sigma_hedge, n_steps, n_paths, seed=None, mu=None):
-    rng = np.random.default_rng(seed)
-    mu = r if mu is None else mu
-    dt = T / n_steps
-    S = np.full(n_paths, float(S0))
-    premium = bs_price(S0, K, T, r, sigma_hedge)
-    delta = np.full(n_paths, greeks(S0, K, T, r, sigma_hedge)["delta"])
-    cash = premium - delta * S
-    for k in range(1, n_steps + 1):
-        z = rng.standard_normal(n_paths)
-        S = S * np.exp((mu - 0.5 * sigma_real**2) * dt + sigma_real * np.sqrt(dt) * z)
-        cash = cash * np.exp(r * dt)
-        if k < n_steps:
-            tau = T - k * dt
-            d1, _ = d1_d2(S, K, tau, r, sigma_hedge)
-            new_delta = norm.cdf(d1)
-            cash -= (new_delta - delta) * S
-            delta = new_delta
-    return cash + delta * S - np.maximum(S - K, 0.0)
+def tail_risk(pnl: pd.Series, level: float = 0.05) -> float:
+    """历史 CVaR：最差 level 比例的月份的实际平均亏损（正数）。"""
+    q = pnl.quantile(level)
+    return float(-pnl[pnl <= q].mean())
+
+
+def evaluate(returns: pd.Series) -> dict:
+    """完整评估，返回研究结论。
+
+    返回字典：
+        sharpe       年化 Sharpe（月度 P&L）
+        tstat        均值 P&L 的 t 统计量
+        skew         月度 P&L 的偏度
+        worst_month  最差一个月的 P&L
+        cvar_95      tail_risk(pnl, 0.05)
+        verdict      "deploy" 或 "reject"
+    """
+    pnl = monthly_pnl(returns)
+    sr = pnl.mean() / pnl.std()
+    t = sr * np.sqrt(len(pnl))
+    cvar = tail_risk(pnl)
+    return {
+        "sharpe": float(sr * np.sqrt(12)),
+        "tstat": float(t),
+        "skew": float(pnl.skew()),
+        "worst_month": float(pnl.min()),
+        "cvar_95": cvar,
+        "verdict": "deploy" if (t > 2.0 and cvar < RISK_LIMIT) else "reject",
+    }
