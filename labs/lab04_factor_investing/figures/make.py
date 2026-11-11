@@ -2,7 +2,7 @@
 
     PYTHONPATH=src:. uv run --frozen python labs/lab04_factor_investing/figures/make.py
 
-图中文字用英文（容器里没有中文字体），中文说明写在讲义的图注里。
+风格（字号、字体、SVG 文字设置）见 quantlab.plotting。
 """
 
 from __future__ import annotations
@@ -10,17 +10,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-
-from quantlab import factors  # noqa: E402
+from quantlab import factors
+from quantlab.plotting import COLORS, FULL_WIDTH, save_svg, use_lecture_style
 
 OUT = Path(__file__).resolve().parent
-COLORS = ["#2a6fb0", "#d1732b", "#3a9a5b"]
 
 
 def neutralization() -> None:
@@ -42,11 +39,11 @@ def neutralization() -> None:
     coef = np.linalg.lstsq(X, raw.to_numpy(), rcond=None)[0]
     gamma, deltas = coef[0], dict(zip(dummies.columns, coef[1:], strict=True))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(FULL_WIDTH, 3.6), sharey=True)
     xs = np.linspace(size.min() - 0.2, size.max() + 0.2, 2)
-    for color, sec in zip(COLORS, sectors, strict=True):
+    for color, sec in zip(COLORS[: len(sectors)], sectors, strict=True):
         m = sector == sec
-        ax1.scatter(size[m], raw[m], s=18, color=color, alpha=0.8, label=sec)
+        ax1.scatter(size[m], raw[m], s=16, color=color, alpha=0.8, label=sec)
         ax1.plot(xs, deltas[sec] + gamma * xs, color=color, lw=1.6)
         ax1.annotate(
             rf"$\delta_{{{sec}}}$",
@@ -54,10 +51,9 @@ def neutralization() -> None:
             xytext=(-2.9, deltas[sec]),
             color=color,
             va="center",
-            fontsize=11,
             arrowprops={"arrowstyle": "-", "color": color, "lw": 0.6, "ls": ":"},
         )
-        ax2.scatter(size[m], resid[m], s=18, color=color, alpha=0.8, label=sec)
+        ax2.scatter(size[m], resid[m], s=16, color=color, alpha=0.8, label=sec)
 
     # 挑一只残差较大的股票，把 u 画成竖线
     pick = resid.abs().idxmax()
@@ -69,7 +65,7 @@ def neutralization() -> None:
         xytext=(8, 0),
         textcoords="offset points",
         va="center",
-        fontsize=12,
+        bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": "none", "alpha": 0.85},
     )
     ax2.vlines(size[pick], 0, resid[pick], color="black", lw=1.4)
     ax2.annotate(
@@ -78,7 +74,7 @@ def neutralization() -> None:
         xytext=(8, 0),
         textcoords="offset points",
         va="center",
-        fontsize=12,
+        bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": "none", "alpha": 0.85},
     )
 
     ax1.axvline(0, color="grey", lw=0.5)
@@ -89,22 +85,19 @@ def neutralization() -> None:
         transform=ax1.transAxes,
         ha="right",
         va="top",
-        fontsize=11,
     )
     ax1.set_xlim(-3.2, size.max() + 0.3)
     ax1.set_title(r"Raw signal $s_{i,t}$ on one day $t$")
-    ax1.set_xlabel(r"size exposure $\mathrm{size}_i$ (small $\leftarrow$ $\rightarrow$ large)")
+    ax1.set_xlabel(r"size exposure $\mathrm{size}_i$")
     ax1.set_ylabel("signal")
-    ax1.legend(title="industry $j$", loc="lower left", fontsize=9)
 
     ax2.axhline(0, color="grey", lw=0.8)
     ax2.set_title(r"Neutralized signal: residual $u_{i,t}$")
     ax2.set_xlabel(r"size exposure $\mathrm{size}_i$")
-    for ax in (ax1, ax2):
-        ax.spines[["top", "right"]].set_visible(False)
-
+    # 残差都在 ±1 以内，右图上半部分是空的，图例放在那里
+    ax2.legend(title="industry $j$", loc="upper center", ncol=len(sectors), frameon=False)
     fig.tight_layout()
-    fig.savefig(OUT / "neutralization.svg")
+    save_svg(fig, OUT / "neutralization.svg")
     if preview := os.environ.get("FIG_PREVIEW_DIR"):  # 只用于查看效果，不入库
         fig.savefig(Path(preview) / "neutralization.png", dpi=110)
     plt.close(fig)
@@ -117,4 +110,5 @@ def neutralization() -> None:
 
 
 if __name__ == "__main__":
+    use_lecture_style()
     neutralization()
