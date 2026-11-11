@@ -7,3 +7,7 @@ extend-exclude = ["hack/agent-home"]
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD"]
 ignore = ["E741", "PD013"]  # PD013: .stack() is idiomatic for panel data
+
+[lint.per-file-ignores]
+# 讲解性的 notebook 以中文注释为主，按 100 列折行会把句子切碎
+"notebooks/*" = ["E501"]

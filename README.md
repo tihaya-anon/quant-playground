@@ -68,6 +68,7 @@ make jupyter                # JupyterLab（localhost:8888）
 所有实现都在 `quantlab` 库里（`returns`、`risk`、`backtest`、`stats`、`factors`、`portfolio`、`pairs`、
 `vol`、`engine`、`ml`、`options`、`execution`），直接调用，测试在 `tests/`。
 审查任何回测时，配合 [回测陷阱清单](docs/pandas-pitfalls.md) 使用。
+不熟悉 pandas 的话，先过一遍 [pandas 速览](notebooks/pandas_tour.py)：只讲这门课里用到的操作和它们的坑。
 
 讲义里的数字和审计测试都基于**合成数据**：离线、确定、而且“真相已知”——我们知道真实的 μ、β、半衰期、
 GARCH 参数，也知道哪里根本没有信号，所以能检验一个结论到底对不对。
