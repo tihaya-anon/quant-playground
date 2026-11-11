@@ -5,6 +5,7 @@
 #   make check                  用参考答案跑全部测试（含 tests/ 下的库测试）
 #   make progress               每个 lab 的审计通过了多少检查
 #   make jupyter                启动 JupyterLab（localhost:8888）
+#   make figures                重新生成所有讲义里的图（labs/*/figures/make.py）
 
 SHELL := /bin/bash
 # 在容器里 venv 在 /opt/venv 且已在 PATH；在宿主机上走 uv run。
@@ -14,10 +15,10 @@ K ?=
 LAB_DIR = $(if $(LAB),$(wildcard labs/lab$(LAB)_*),)
 KFLAG = $(if $(K),-k "$(K)",)
 
-.PHONY: help test check progress lint fmt jupyter clean
+.PHONY: help test check progress lint fmt jupyter figures clean
 
 help:
-	@sed -n '1,9p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '/^[^#]/q;p' Makefile | sed 's/^# \{0,1\}//'
 
 test:
 	$(RUN) pytest $(LAB_DIR) $(KFLAG)
@@ -42,6 +43,9 @@ fmt:
 
 jupyter:
 	$(RUN) jupyter lab --no-browser --ip=127.0.0.1 --port=8888
+
+figures:
+	@for f in labs/*/figures/make.py; do echo "== $$f"; PYTHONPATH=src:. $(RUN) python $$f || exit 1; done
 
 clean:
 	rm -rf .pytest_cache .ruff_cache

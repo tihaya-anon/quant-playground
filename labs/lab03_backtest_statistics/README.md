@@ -30,8 +30,16 @@ $$
 \mathrm{SE}(\widehat{SR}) \approx \sqrt{\frac{1 + \tfrac{1}{2}SR^2}{n}}
 $$
 
-其中 $n$ 是观测期数。日频的 $SR$ 很小（年化 1.0 对应每日约 0.063），所以分子里的 $\tfrac12 SR^2$ 可以忽略，
-$\mathrm{SE} \approx 1/\sqrt{n}$。换算成年化：
+| 符号 | 含义 |
+| --- | --- |
+| $SR$ | 真实的**每期** Sharpe：每期（超额）收益的期望 / 每期收益的标准差，不年化 |
+| $\widehat{SR}$ | 用样本均值和样本标准差算出的每期 Sharpe（`quantlab.stats.per_period_sharpe`） |
+| $n$ | 观测期数，例如 10 年日频数据 $n \approx 2520$ |
+| $\mathrm{SE}(\cdot)$ | 估计量的标准误：如果在很多个平行宇宙里重做这段回测，$\widehat{SR}$ 的标准差 |
+
+日频的 $SR$ 很小（年化 1.0 对应每日约 $1/\sqrt{252} \approx 0.063$），所以分子里的 $\tfrac12 SR^2$ 可以忽略，
+$\mathrm{SE} \approx 1/\sqrt{n}$。年化 Sharpe 是每期 Sharpe 乘以 $\sqrt{252}$，标准误也乘以 $\sqrt{252}$，
+得到 $\sqrt{252/n}$，而 $n/252 = T_{\text{年}}$ 就是数据覆盖的年数：
 
 $$
 \mathrm{SE}(\widehat{SR}_{\text{年化}}) \approx \frac{1}{\sqrt{T_{\text{年}}}}
@@ -65,7 +73,9 @@ $$
 \mathrm{SE}(\widehat{SR}) \approx \sqrt{\frac{1 - \gamma_3 SR + \tfrac{\gamma_4 - 1}{4} SR^2}{n - 1}}
 $$
 
-$\gamma_3$ 是偏度，$\gamma_4$ 是峰度（正态分布为 3）。**负偏度会放大标准误**，而负偏度正是很多
+$SR$ 和 $n$ 的含义同上（每期 Sharpe、观测期数）；$\gamma_3$ 是每期收益的偏度，$\gamma_4$ 是峰度
+（**非超额**峰度，正态分布为 3；注意 pandas 的 `.kurt()` 返回的是超额峰度，要加 3 才能代入）。
+代入正态的 $\gamma_3 = 0$、$\gamma_4 = 3$，就退化成上面 Lo 的公式（分母差一个 $n$ 与 $n-1$）。**负偏度会放大标准误**，而负偏度正是很多
 “高 Sharpe”策略的特征：卖出期权、做空波动率、套息交易、某些统计套利。它们平时稳定地赚小钱，
 偶尔一次亏掉很多。在一段没有发生那次大亏的历史上，它们的 Sharpe 看起来极高。
 **一个 Sharpe 3 的策略，第一个要问的问题是：它是不是在卖保险？**
@@ -96,7 +106,21 @@ $$
 \mathbb{E}\left[\max_{i \le N} \widehat{SR}_i\right] \approx \sigma_{SR}\left[(1-\gamma)\,\Phi^{-1}\!\left(1 - \tfrac{1}{N}\right) + \gamma\,\Phi^{-1}\!\left(1 - \tfrac{1}{Ne}\right)\right] \approx \sigma_{SR}\sqrt{2\ln N}
 $$
 
-（$\gamma \approx 0.5772$ 是欧拉常数）。10 年数据下 $\sigma_{SR} \approx 0.32$（年化）：
+| 符号 | 含义 |
+| --- | --- |
+| $N$ | 试过的策略（参数组合、变体）个数 |
+| $\widehat{SR}_i$ | 第 $i$ 个策略的样本 Sharpe，$i = 1, \dots, N$ |
+| $\sigma_{SR}$ | 这 $N$ 个样本 Sharpe 的标准差（真实 Sharpe 全为 0 时，它就是第 1 节的标准误）；单位和 $\widehat{SR}_i$ 一致，每期或年化都可以 |
+| $\Phi^{-1}$ | 标准正态分布的分位数函数，例如 $\Phi^{-1}(0.99) \approx 2.33$ |
+| $\gamma$ | 欧拉常数 $\approx 0.5772$（和第 2 节的偏度 $\gamma_3$、峰度 $\gamma_4$ 无关，只是同一个字母） |
+| $e$ | 自然对数的底 $\approx 2.718$ |
+
+中间的表达式是 Bailey & López de Prado 给出的近似（`quantlab.stats.expected_max_sharpe`），
+最右边的 $\sigma_{SR}\sqrt{2\ln N}$ 是 $N$ 很大时的渐近形式，系统性偏大（$N = 20$ 时偏大约 30%，$N = 100$ 时约 20%，
+$N = 1000$ 时约 14%），只用来记住量级：
+最大值随试验次数**按 $\sqrt{\ln N}$ 增长**，增长得很慢，但永远在增长。
+
+10 年数据下 $\sigma_{SR} \approx 0.32$（年化）：
 试 100 次，最好的那个年化 Sharpe 期望约 **0.8**；试 1000 次，约 **1.0**。
 **全部是纯噪声。**
 
@@ -109,8 +133,12 @@ $$
 
 - **PSR**（Probabilistic Sharpe Ratio）回答：真实 Sharpe 大于某个基准 $SR^*$ 的概率有多大？
   它用的就是第 2 节里的 Mertens 标准误：$\mathrm{PSR} = \Phi\!\left(\frac{(\widehat{SR} - SR^*)\sqrt{n-1}}{\sqrt{1 - \gamma_3\widehat{SR} + \frac{\gamma_4-1}{4}\widehat{SR}^2}}\right)$。
+  其中 $\Phi$ 是标准正态分布的累积分布函数，$\widehat{SR}$ 是被检验策略的**每期**样本 Sharpe，
+  $SR^*$ 是同样以每期为单位的基准 Sharpe（只问“是否大于 0”时 $SR^* = 0$），
+  $n$、$\gamma_3$、$\gamma_4$ 是这个策略收益的观测期数、偏度和非超额峰度。PSR 是一个 0 到 1 之间的概率。
 - **DSR** 就是把基准 $SR^*$ 设为“试了 $N$ 次之后，最好的那个**在纯噪声下**本该有多好”，
-  也就是上面那个期望最大值。
+  也就是上面那个期望最大值。实现上（`quantlab.stats.deflated_sharpe_ratio`），$\sigma_{SR}$ 用全部 $N$ 个
+  尝试的每期样本 Sharpe 的标准差来估计，所以要把**每一个**尝试过的 Sharpe 都传进去，而不只是最好的那个。
 
 PSR 超过 0.95 只说明“如果这是我唯一试过的策略，它显著”。DSR 超过 0.95 才说明“考虑到我一共试了 $N$ 次，它依然显著”。
 

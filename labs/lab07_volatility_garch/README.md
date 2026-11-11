@@ -40,8 +40,14 @@ $$
 \sigma_t^2 = \lambda\,\sigma_{t-1}^2 + (1-\lambda)\,r_{t-1}^2
 $$
 
+- $\sigma_t^2$：对第 $t$ 天收益方差的**预测**（日频），在第 $t-1$ 天收盘时就已算出。
+- $r_{t-1}$：第 $t-1$ 天的日收益。这里假设日收益均值近似为 0，所以 $r_{t-1}^2$ 就是那一天方差的一个（很嘈杂的）观测。
+- $\lambda \in (0,1)$：衰减系数。昨天的预测占 $\lambda$，最新的平方收益占 $1-\lambda$；
+  $k$ 天前的平方收益权重是 $(1-\lambda)\lambda^{k-1}$，按几何级数衰减。
+
 注意下标：**决定第 t 天仓位的方差，只能用到 $r_{t-1}$**。
 $\lambda=0.94$ 对应大约 $1/(1-\lambda) \approx 17$ 天的有效窗口。
+日频方差乘 252 再开根号，得到年化波动。
 
 **GARCH(1,1)** 多了一个常数项，使方差有一个长期均值可以回归：
 
@@ -50,14 +56,28 @@ $$
 \qquad \bar\sigma^2 = \frac{\omega}{1-\alpha-\beta}
 $$
 
+| 符号 | 含义 |
+| --- | --- |
+| $\sigma_t^2$ | 第 $t$ 天的条件方差（日频）：用第 $t-1$ 天及以前的信息对当天方差的预测 |
+| $\varepsilon_{t-1}$ | 第 $t-1$ 天的收益冲击，即收益减去均值：$\varepsilon_t = r_t - \mu$，$\varepsilon_t = \sigma_t z_t$，$z_t$ 是均值 0、方差 1 的独立新息 |
+| $\omega$ | 常数项（$> 0$），让方差有一个可以回归的长期水平 |
+| $\alpha$ | 对新冲击的反应速度：昨天的冲击有多大比例进入今天的方差 |
+| $\beta$ | 记忆的长度：昨天的方差预测有多大比例延续到今天 |
+| $\alpha+\beta$ | **持续性**，必须 $< 1$，否则方差没有长期均值 |
+| $\bar\sigma^2$ | 长期（无条件）方差，日频；$\sqrt{252\,\bar\sigma^2}$ 是长期年化波动 |
+
 - $\alpha$：对新冲击的反应速度；$\beta$：记忆的长度；$\alpha+\beta$：**持续性**。
-- 多步预测按 $(\alpha+\beta)^h$ 几何地回归长期方差，冲击的半衰期是 $\ln 0.5 / \ln(\alpha+\beta)$。
+- 多步预测按 $(\alpha+\beta)^h$ 几何地回归长期方差：$h$ 天后的方差预测是
+  $\bar\sigma^2 + (\alpha+\beta)^{h}\,(\sigma_{t+1}^2 - \bar\sigma^2)$，其中 $\sigma_{t+1}^2$ 是一步预测、$h = 0, 1, 2, \dots$。
+  冲击的半衰期（单位：天）是 $\ln 0.5 / \ln(\alpha+\beta)$。
   典型的股票指数 $\alpha+\beta \approx 0.98$，半衰期一个多月。
 - EWMA 就是 $\omega=0$、$\alpha+\beta=1$ 的 GARCH：没有长期均值，预测不会回归。
   做短期风控足够，做长期预测会出错。
 
 参数用极大似然估计：假设 $\varepsilon_t/\sigma_t$ 服从标准正态，最大化
 $\sum_t -\tfrac12\left[\ln(2\pi) + \ln\sigma_t^2 + \varepsilon_t^2/\sigma_t^2\right]$。
+这是正态密度 $\frac{1}{\sqrt{2\pi\sigma_t^2}}\exp\!\big(-\frac{\varepsilon_t^2}{2\sigma_t^2}\big)$ 取对数后对所有天求和；
+$\sigma_t^2$ 由上面的递推式从 $(\omega,\alpha,\beta)$ 算出，所以对数似然是这三个参数的函数。
 约束 $\omega>0,\ \alpha,\beta\ge0,\ \alpha+\beta<1$ 通过重参数化处理。
 
 在真实参数为 $\alpha=0.08,\ \beta=0.90$ 的合成数据上，MLE 拟合得到 $\alpha=0.078,\ \beta=0.906$，
@@ -75,6 +95,8 @@ GARCH 的优势在这里被夸大了：它是在同一段数据上拟合和评�
 ## 3. 波动率目标
 
 把仓位设为 $w_t = \sigma^{\text{target}} / \hat\sigma_t$，组合的波动率就会大致稳定在目标附近。
+$w_t$ 是第 $t$ 天持有的风险资产仓位（1 表示满仓，大于 1 表示加杠杆），$\sigma^{\text{target}}$ 是目标年化波动，
+$\hat\sigma_t$ 是用第 $t-1$ 天及以前数据对当天波动的预测（同样年化，例如上面 EWMA 或 GARCH 的预测）。
 
 它为什么可能提高 Sharpe？如果波动率高的时期收益并没有按比例变高（实证上，股票在高波动期的
 风险调整后收益往往更差），那么在高波动期降仓、低波动期加仓，就是在“风险便宜”的时候多买风险。
@@ -100,7 +122,8 @@ Moreira & Muir (2017) 在多个资产上发现了这种效应。
 ## 4. Kelly 与杠杆：最优下注，以及为什么不能照做
 
 以 $f$ 倍杠杆持有一个年化期望收益 $\mu$、波动 $\sigma$ 的资产，借贷利率为 $r_f$。
-组合的**对数**（复利）增长率是
+$f$ 是投在风险资产上的金额占本金的倍数：$f = 1$ 满仓不借钱，$f = 2$ 借入一倍本金（付 $r_f$），$f < 1$ 剩余部分持有现金（赚 $r_f$）。
+$\mu$、$\sigma$、$r_f$ 都是年化的，$\mu - r_f$ 是超额收益。组合的**对数**（复利）增长率（年化）是
 
 $$
 g(f) = r_f + f(\mu - r_f) - \tfrac12 f^2\sigma^2
@@ -111,6 +134,9 @@ $$
 $$
 f^* = \frac{\mu - r_f}{\sigma^2}, \qquad g(f^*) = r_f + \frac{(\mu-r_f)^2}{2\sigma^2} = r_f + \tfrac12 SR^2
 $$
+
+其中 $SR = (\mu - r_f)/\sigma$ 是年化 Sharpe。$g(f)$ 的公式来自连续时间的近似（伊藤引理：对数增长率 = 算术收益 − 方差/2），
+假设杠杆是连续再平衡的。
 
 这就是 **Kelly 杠杆**。几个关键事实：
 
@@ -126,11 +152,15 @@ $$
 把 $\hat\mu = \mu + e$ 代入 Kelly 公式，平均真实增长率是
 
 $$
-\mathbb{E}\big[g(\hat f)\big] - r_f = \frac{\mu^2 - \operatorname{Var}(e)}{2\sigma^2} \;\approx\; \frac{1}{2}\left(SR^2 - \frac{1}{T}\right)
+\mathbb{E}\big[g(\hat f)\big] - r_f = \frac{(\mu - r_f)^2 - \operatorname{Var}(e)}{2\sigma^2} \;\approx\; \frac{1}{2}\left(SR^2 - \frac{1}{T}\right)
 $$
 
+- $e$：$\hat\mu$ 的估计误差，均值 0；$\hat f = (\hat\mu - r_f)/\sigma^2$ 是按估计值算出的杠杆（这里假设 $\sigma$ 已知，它比 $\mu$ 好估得多）。
+- $T$：估计 $\mu$ 用的数据年数。$\operatorname{Var}(e) \approx \sigma^2/T$，代入即得右边的近似。
+- 推导：$g(\hat f) - r_f = \hat f(\mu - r_f) - \tfrac12\hat f^2\sigma^2$，对 $e$ 取期望，交叉项为 0，只剩 $\operatorname{Var}(e)$ 那一项。
+
 **当 $SR < 1/\sqrt{T}$ 时，用估计参数的完全 Kelly 期望增长为负。** Sharpe 0.3、5 年数据：
-$0.09 < 0.2$。这不是极端情况，而是常态。分数 Kelly（通常取一半或更少）的意义就在于此：
+$SR^2 = 0.09 < 1/T = 0.2$。这不是极端情况，而是常态。分数 Kelly（通常取一半或更少）的意义就在于此：
 它牺牲一点点理论最优增长，换来对估计误差的鲁棒性。专业机构几乎从不使用完全 Kelly。
 
 同一个 Sharpe 0.3 的资产，在 2000 个平行宇宙里只用过去 5 年数据估计 $\mu$ 和 $\sigma$，再按估计值下注（杠杆上限 5 倍）：
