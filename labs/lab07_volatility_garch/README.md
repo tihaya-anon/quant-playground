@@ -145,17 +145,17 @@ $$
 最后一项是**波动拖累**：算术收益随杠杆线性增长，但复利增长被 $f^2$ 项拖下来。最大化 $g$：
 
 $$
-f^* = \frac{\mu - r_f}{\sigma^2}, \qquad g(f^*) = r_f + \frac{(\mu-r_f)^2}{2\sigma^2} = r_f + \tfrac12 SR^2
+f^* = \frac{\mu - r_f}{\sigma^2}, \qquad g(f^*) = r_f + \frac{(\mu-r_f)^2}{2\sigma^2} = r_f + \tfrac12 \mathrm{SR}^2
 $$
 
-其中 $SR = (\mu - r_f)/\sigma$ 是年化 Sharpe。$g(f)$ 的公式来自连续时间的近似（伊藤引理：对数增长率 = 算术收益 − 方差/2），
+其中 $\mathrm{SR} = (\mu - r_f)/\sigma$ 是年化 Sharpe。$g(f)$ 的公式来自连续时间的近似（伊藤引理：对数增长率 = 算术收益 − 方差/2），
 假设杠杆是连续再平衡的。
 
 这就是 **Kelly 杠杆**。几个关键事实：
 
 - $g(f)$ 是关于 $f$ 的抛物线，**2 倍 Kelly 时超额增长归零**，超过 2 倍就是负增长——
   期望收益为正的资产，加太多杠杆也会让你长期破产。
-- 最优增长率只取决于 Sharpe：$\tfrac12 SR^2$。Sharpe 0.3 的资产，加到最优杠杆也只能多赚 4.5%。
+- 最优增长率只取决于 Sharpe：$\tfrac12 \mathrm{SR}^2$。Sharpe 0.3 的资产，加到最优杠杆也只能多赚 4.5%。
 - **左右不对称**：下注不足（半 Kelly）损失 25% 的超额增长；下注过多（2 倍 Kelly）损失 100%。
 
   以年化超额收益 6%、波动 20%（Sharpe 0.3）的资产为例，Kelly 杠杆 $f^* = 1.5$。模拟得到的长期超额对数增长率：
@@ -165,15 +165,15 @@ $$
 把 $\hat\mu = \mu + e$ 代入 Kelly 公式，平均真实增长率是
 
 $$
-\mathbb{E}\big[g(\hat f)\big] - r_f = \frac{(\mu - r_f)^2 - \operatorname{Var}(e)}{2\sigma^2} \;\approx\; \frac{1}{2}\left(SR^2 - \frac{1}{T}\right)
+\mathbb{E}\big[g(\hat f)\big] - r_f = \frac{(\mu - r_f)^2 - \operatorname{Var}(e)}{2\sigma^2} \;\approx\; \frac{1}{2}\left(\mathrm{SR}^2 - \frac{1}{T}\right)
 $$
 
 - $e$：$\hat\mu$ 的估计误差，均值 0；$\hat f = (\hat\mu - r_f)/\sigma^2$ 是按估计值算出的杠杆（这里假设 $\sigma$ 已知，它比 $\mu$ 好估得多）。
 - $T$：估计 $\mu$ 用的数据年数。$\operatorname{Var}(e) \approx \sigma^2/T$，代入即得右边的近似。
 - 推导：$g(\hat f) - r_f = \hat f(\mu - r_f) - \tfrac12\hat f^2\sigma^2$，对 $e$ 取期望，交叉项为 0，只剩 $\operatorname{Var}(e)$ 那一项。
 
-**当 $SR < 1/\sqrt{T}$ 时，用估计参数的完全 Kelly 期望增长为负。** Sharpe 0.3、5 年数据：
-$SR^2 = 0.09 < 1/T = 0.2$。这不是极端情况，而是常态。分数 Kelly（通常取一半或更少）的意义就在于此：
+**当 $\mathrm{SR} < 1/\sqrt{T}$ 时，用估计参数的完全 Kelly 期望增长为负。** Sharpe 0.3、5 年数据：
+$\mathrm{SR}^2 = 0.09 < 1/T = 0.2$。这不是极端情况，而是常态。分数 Kelly（通常取一半或更少）的意义就在于此：
 它牺牲一点点理论最优增长，换来对估计误差的鲁棒性。专业机构几乎从不使用完全 Kelly。
 
 同一个 Sharpe 0.3 的资产，在 2000 个平行宇宙里只用过去 5 年数据估计 $\mu$ 和 $\sigma$，再按估计值下注（杠杆上限 5 倍）：

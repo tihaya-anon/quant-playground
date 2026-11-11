@@ -61,7 +61,7 @@ $\alpha$ 的 t 值检验的就是“这部分是不是噪声”（lab03）。
 得到一个 IC 时间序列：
 
 $$
-IC_t = \operatorname{corr}\big(\operatorname{rank}(s_{\cdot,t}),\ \operatorname{rank}(r_{\cdot,t+1})\big)
+\mathrm{IC}_t = \operatorname{corr}\big(\operatorname{rank}(s_{\cdot,t}),\ \operatorname{rank}(r_{\cdot,t+1})\big)
 $$
 
 其中 $s_{\cdot,t}$ 是第 $t$ 天所有股票的信号（一个长度为 $N$ 的向量），$r_{\cdot,t+1}$ 是同一批股票下一天的收益，
@@ -74,11 +74,11 @@ $\text{ICIR} \times \sqrt{T}$（$T$ 为天数）就是“平均 IC = 0”的 t �
 **主动管理基本定律**（Grinold, 1989）把这件事说清楚了：
 
 $$
-IR \approx IC \times \sqrt{\text{breadth}}
+\mathrm{IR} \approx \mathrm{IC} \times \sqrt{\text{breadth}}
 $$
 
-- $IR$（Information Ratio，信息比率）：主动收益的年化均值除以它的年化标准差。对一个多空组合，就是它的年化 Sharpe。
-- $IC$：**每一次下注**的平均 IC，即上面的日度 IC 均值。
+- $\mathrm{IR}$（Information Ratio，信息比率）：主动收益的年化均值除以它的年化标准差。对一个多空组合，就是它的年化 Sharpe。
+- $\mathrm{IC}$：**每一次下注**的平均 IC，即上面的日度 IC 均值。
 - breadth：每年**独立**下注的次数。300 只股票、每天调仓，breadth 是 300 × 252；30 只股票，少了 10 倍，
 IR 就少了 $\sqrt{10} \approx 3.2$ 倍。**一个很弱的信号，可以通过在足够多的股票上、足够频繁地使用，
 变成一个很高 Sharpe 的组合**——前提是它在每个下注上都是独立的，而且成本不吃掉它（第 4 节）。

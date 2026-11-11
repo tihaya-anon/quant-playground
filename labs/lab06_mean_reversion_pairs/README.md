@@ -43,13 +43,13 @@ $$
 
 推导：偏离均值的部分每天乘以 $\phi$，$h$ 天后剩下 $\phi^h$，令 $\phi^h = 1/2$ 即得。
 $\phi = 0.955$ 对应 15 天，$\phi = 0.87$ 对应 5 天。它是连续时间 **Ornstein-Uhlenbeck 过程**
-$dX = \kappa(\theta - X)dt + \sigma dW$ 的离散版本：
+$\mathrm{d}X = \kappa(\theta - X)\,\mathrm{d}t + \sigma\,\mathrm{d}W$ 的离散版本：
 
-- $X$：连续时间下的序列值；$dX$ 是它在极短时间 $dt$ 内的变化。
+- $X$：连续时间下的序列值；$\mathrm{d}X$ 是它在极短时间 $\mathrm{d}t$ 内的变化。
 - $\theta$：长期均值，等于 $c/(1-\phi)$。
-- $\kappa$：回复速度，单位是“每天”；偏离以 $e^{-\kappa t}$ 衰减。时间步长为 1 天时 $\kappa = -\ln\phi$，
+- $\kappa$：回复速度，单位是“每天”；偏离以 $\mathrm{e}^{-\kappa t}$ 衰减。时间步长为 1 天时 $\kappa = -\ln\phi$，
   半衰期也可以写成 $h = \ln 2 / \kappa$。
-- $\sigma$：冲击的强度（波动率）；$dW$ 是布朗运动的增量，均值 0、方差 $dt$。
+- $\sigma$：冲击的强度（波动率）；$\mathrm{d}W$ 是布朗运动的增量，均值 0、方差 $\mathrm{d}t$。
 
 半衰期决定了策略的节奏：持仓多久、z-score 用多长的窗口、交易有多频繁。
 

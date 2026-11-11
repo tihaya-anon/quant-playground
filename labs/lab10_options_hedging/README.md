@@ -74,12 +74,12 @@ $\sigma_{\text{impl}}^2\Delta t$ 是按隐含波动率“预期”的这一周�
 把整个存续期加起来：
 
 $$
-\text{P\&L}_{\text{卖方}} \approx \int_0^T \tfrac12\,\Gamma_t S_t^2 \left(\sigma_{\text{impl}}^2 - \sigma_{\text{real},t}^2\right) dt
+\text{P\&L}_{\text{卖方}} \approx \int_0^T \tfrac12\,\Gamma_t S_t^2 \left(\sigma_{\text{impl}}^2 - \sigma_{\text{real},t}^2\right)\,\mathrm{d}t
 $$
 
 这里 $T$ 是期权的存续期（年），$\Gamma_t$ 和 $S_t$ 是 $t$ 时刻的 gamma 和标的价格，
 $\sigma_{\text{real},t}$ 是 $t$ 时刻标的**实际**的瞬时波动率（年化）。把上一个式子中每个周期的
-$(\Delta S/S)^2$ 换成它的期望 $\sigma_{\text{real},t}^2\,\Delta t$，再对所有周期求和（$\Delta t \to dt$），就得到这个积分。
+$(\Delta S/S)^2$ 换成它的期望 $\sigma_{\text{real},t}^2\,\Delta t$，再对所有周期求和（$\Delta t \to \mathrm{d}t$），就得到这个积分。
 
 由此得到三个结论：
 

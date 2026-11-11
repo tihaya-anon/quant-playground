@@ -100,7 +100,7 @@ def max_sharpe_vs_trials() -> None:
         color=COLORS[0],
         ls=":",
         lw=1.3,
-        label=r"$\sigma_{SR}$ · (2 ln $N$)$^{1/2}$ (overstates)",
+        label=r"$\sigma_{\mathrm{SR}}\,(2\ln N)^{1/2}$ (overstates)",
     )
     ax.plot(sim_n, sim, "o", color=COLORS[1], ms=5, label="simulated average best of $N$")
     ax.axhline(good, color=COLORS[2], ls="--", lw=1.2)

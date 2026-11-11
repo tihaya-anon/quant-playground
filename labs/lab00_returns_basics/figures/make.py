@@ -103,7 +103,7 @@ def mean_vs_median() -> None:
         color=COLORS[1],
         ls=":",
         lw=1.2,
-        label=r"theory: $e^{\mu T}$",
+        label=r"theory: $\mathrm{e}^{\mu T}$",
     )
     ax.set_yscale("log")
     ax.set_yticks([0.1, 0.3, 1, 3, 10, 30])
