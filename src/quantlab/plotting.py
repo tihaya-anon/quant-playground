@@ -46,6 +46,8 @@ def use_lecture_style() -> None:
             "figure.dpi": 100,
             "savefig.bbox": "tight",
             "savefig.pad_inches": 0.05,
+            # 固定 SVG 里元素 id 的随机盐，图不变时重新生成得到完全相同的文件，git diff 干净
+            "svg.hashsalt": "quantlab",
         }
     )
 
@@ -96,7 +98,7 @@ def save_svg(fig, path) -> None:
     from pathlib import Path
 
     path = Path(path)
-    fig.savefig(path, format="svg")
+    fig.savefig(path, format="svg", metadata={"Date": None})  # 不写时间戳，保证可复现
     svg = path.read_text(encoding="utf-8")
 
     # <text>/<tspan> 里的字符，加上一个最小集合（数字、基本拉丁、常用符号），保证不缺字

@@ -29,7 +29,8 @@ confirm at least one test in `test_audit.py` fails.
   with `make figures`) from `quantlab` code, and call `quantlab.plotting.use_lecture_style()`
   first: it writes text as real SVG text and sizes figures ~1:1 with the preview width, which is
   what keeps them crisp. Plot labels are English (the images have no CJK font); the Chinese
-  explanation goes in the caption.
+  explanation goes in the caption. Avoid `\sqrt` in plot text: with text written as SVG text
+  the radical and its bar misalign; write `(...)^{1/2}` instead.
 - Tests run on synthetic data from `src/quantlab/data.py` with fixed seeds: keep them offline,
   deterministic, and under ~30s per lab. Statistical assertions need generous tolerances.
 - Any change to a test must still pass with `make check` (reference solutions).
